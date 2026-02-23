@@ -1,0 +1,58 @@
+# ── Python / Django ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Environment files — NEVER commit secrets
+.env
+.env.*
+!.env.example
+
+# Django
+*.log
+logs/
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+
+# Firebase service account — contains private key
+firebase-service-account.json
+service-account*.json
+google-credentials*.json
+
+# ── Node / React Native / Expo ─────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Metro bundler
+.metro-health-check*
+
+# ── Claude Code local config ───────────────────────────────────────────────────
+.claude/
+
+# ── OS / Editor ────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

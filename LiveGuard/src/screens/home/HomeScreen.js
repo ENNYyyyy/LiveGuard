@@ -1,0 +1,350 @@
+import React, { useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Image,
+  Alert,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import MapView, { Marker } from 'react-native-maps';
+import { useDispatch, useSelector } from 'react-redux';
+import { requestLocationPermission, getCurrentLocation, fetchLocation } from '../../store/locationSlice';
+import { fetchAlertHistory } from '../../store/alertSlice';
+import { setupNotificationListeners, registerForPushNotifications } from '../../services/notificationService';
+import { registerDevice } from '../../store/authSlice';
+import SOSButton from '../../components/SOSButton';
+import LocationBar from '../../components/LocationBar';
+import NoInternetBanner from '../../components/NoInternetBanner';
+import useNetInfo from '../../hooks/useNetInfo';
+import colors from '../../utils/colors';
+
+const HomeScreen = ({ navigation }) => {
+  const dispatch = useDispatch();
+  const { latitude, longitude, address, permissionStatus, locationError, loading: locationLoading } =
+    useSelector((state) => state.location);
+  const user = useSelector((state) => state.auth.user);
+  const { isConnected } = useNetInfo();
+
+  useEffect(() => {
+    const init = async () => {
+      await dispatch(requestLocationPermission());
+      dispatch(getCurrentLocation());
+      dispatch(fetchAlertHistory());
+
+      // Register push token every time the home screen mounts.
+      // getExpoPushTokenAsync returns the same token so this is idempotent.
+      const token = await registerForPushNotifications();
+      if (token) dispatch(registerDevice(token));
+    };
+    init();
+
+    const cleanup = setupNotificationListeners(
+      () => {}, // foreground: banner already shown by the OS
+      (response) => {
+        // User tapped a notification — navigate to the relevant alert
+        const data = response?.notification?.request?.content?.data;
+        if (data?.alert_id) {
+          navigation.navigate('AlertStatusScreen', { alertId: data.alert_id });
+        }
+      }
+    );
+    return cleanup;
+  }, []);
+
+  const hasCoords = latitude !== null && longitude !== null;
+  const permissionDenied = permissionStatus === 'denied';
+  const hasLocationError = locationError === 'timeout' || locationError === 'unavailable';
+
+  const handleSOSPress = () => {
+    if (!isConnected) {
+      Alert.alert(
+        'No internet connection',
+        'Your alert may not be sent.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Send Anyway', onPress: () => navigation.navigate('EmergencyAlertScreen') },
+        ]
+      );
+    } else {
+      navigation.navigate('EmergencyAlertScreen');
+    }
+  };
+
+  const handleRetryLocation = () => {
+    dispatch(fetchLocation());
+  };
+
+  // Determine what to show in the location status area
+  const renderLocationStatus = () => {
+    if (permissionDenied) {
+      return (
+        <View style={styles.locationStatusRow}>
+          <View style={styles.dotRed} />
+          <Text style={styles.locationStatusText}>Location unavailable</Text>
+        </View>
+      );
+    }
+    if (hasLocationError) {
+      return (
+        <View style={styles.locationErrorRow}>
+          <Text style={styles.locationErrorText}>Unable to get location</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={handleRetryLocation} disabled={locationLoading}>
+            <Text style={styles.retryBtnText}>{locationLoading ? 'Retrying…' : 'Retry'}</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      {/* Offline banner */}
+      <NoInternetBanner visible={!isConnected} />
+
+      {/* Header */}
+      <View style={[styles.header, !isConnected && styles.headerOffsetForBanner]}>
+        <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.menuBtn}>
+          <Text style={styles.menuIcon}>☰</Text>
+        </TouchableOpacity>
+
+        <View style={styles.headerCenter}>
+          <Text style={styles.welcomeLabel}>Welcome,</Text>
+          <Text style={styles.userName}>{user?.firstName} {user?.lastName}</Text>
+        </View>
+
+        <View style={styles.avatarWrapper}>
+          {user?.avatar ? (
+            <Image source={{ uri: user.avatar }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarFallback]}>
+              <Text style={styles.avatarInitial}>
+                {user?.firstName?.[0]?.toUpperCase() || 'U'}
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.content}>
+        {/* Location error/status strip */}
+        {renderLocationStatus()}
+
+        {/* SOS card */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Are you in an emergency?</Text>
+          <Text style={styles.cardSubtitle}>
+            Press the button below and help will reach you shortly
+          </Text>
+          <View style={styles.gap24} />
+          <SOSButton onPress={handleSOSPress} />
+        </View>
+
+        {/* Mini map */}
+        <View style={styles.mapContainer}>
+          {hasCoords && !permissionDenied ? (
+            <MapView
+              style={styles.map}
+              region={{
+                latitude,
+                longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              }}
+              scrollEnabled={false}
+              zoomEnabled={false}
+              pitchEnabled={false}
+              rotateEnabled={false}
+            >
+              <Marker
+                coordinate={{ latitude, longitude }}
+                pinColor={colors.PRIMARY_BLUE}
+                title="You"
+              />
+            </MapView>
+          ) : (
+            <View style={styles.mapPlaceholder}>
+              <Text style={styles.mapPlaceholderText}>
+                {permissionDenied
+                  ? 'Location access denied'
+                  : hasLocationError
+                  ? 'Unable to get location'
+                  : address || 'Fetching location…'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Location bar */}
+        <LocationBar
+          address={address}
+          avatarUri={user?.avatar || null}
+          onPress={() => navigation.navigate('LocationPickerScreen')}
+        />
+      </View>
+    </SafeAreaView>
+  );
+};
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: colors.BACKGROUND_LIGHT,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: colors.BACKGROUND_WHITE,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.BORDER_GREY,
+  },
+  // When banner is visible, push header down to avoid overlap
+  headerOffsetForBanner: {
+    marginTop: 44,
+  },
+  menuBtn: {
+    width: 40,
+    alignItems: 'flex-start',
+  },
+  menuIcon: {
+    fontSize: 24,
+    color: colors.TEXT_DARK,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  welcomeLabel: {
+    fontSize: 14,
+    fontWeight: '400',
+    color: colors.ACCENT_RED,
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.TEXT_DARK,
+  },
+  avatarWrapper: {
+    width: 40,
+    alignItems: 'flex-end',
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  avatarFallback: {
+    backgroundColor: colors.PRIMARY_BLUE,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitial: {
+    color: colors.BACKGROUND_WHITE,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  content: {
+    flex: 1,
+    padding: 16,
+    gap: 12,
+  },
+  card: {
+    backgroundColor: colors.CARD_WHITE,
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  cardTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.TEXT_DARK,
+    textAlign: 'center',
+  },
+  cardSubtitle: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: colors.TEXT_MEDIUM,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 22,
+  },
+  gap24: { height: 24 },
+  mapContainer: {
+    height: 180,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  map: {
+    flex: 1,
+  },
+  mapPlaceholder: {
+    flex: 1,
+    backgroundColor: colors.BORDER_GREY,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mapPlaceholderText: {
+    fontSize: 13,
+    color: colors.TEXT_MEDIUM,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+  },
+  // Location status strip
+  locationStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  dotRed: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.ERROR_RED,
+  },
+  locationStatusText: {
+    fontSize: 13,
+    color: colors.ERROR_RED,
+    fontWeight: '500',
+  },
+  locationErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  locationErrorText: {
+    fontSize: 13,
+    color: colors.ERROR_RED,
+    fontWeight: '500',
+    flex: 1,
+  },
+  retryBtn: {
+    backgroundColor: colors.ERROR_RED,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 100,
+  },
+  retryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+});
+
+export default HomeScreen;
