@@ -1,6 +1,8 @@
 import math
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
+from django.db import transaction
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -14,7 +16,7 @@ from .serializers import (
     EmergencyAlertListSerializer,
 )
 from agencies.models import SecurityAgency
-from notifications.services import NotificationDispatcher
+from notifications.services import NotificationDispatcher, enqueue_alert_dispatch
 
 
 ALERT_TYPE_AGENCY_MAP = {
@@ -75,40 +77,47 @@ class CreateEmergencyAlertView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        alert = serializer.save(user=request.user)
+        with transaction.atomic():
+            alert = serializer.save(user=request.user)
 
-        agency_types = ALERT_TYPE_AGENCY_MAP.get(alert.alert_type, ['POLICE'])
-        agencies = list(SecurityAgency.objects.filter(
-            agency_type__in=agency_types, is_active=True
-        ))
+            agency_types = ALERT_TYPE_AGENCY_MAP.get(alert.alert_type, ['POLICE'])
+            agencies = list(SecurityAgency.objects.filter(
+                agency_type__in=agency_types, is_active=True
+            ))
 
-        # Rank agencies by proximity when the alert has a location.
-        # assignment_priority=1 means closest/highest priority.
-        try:
-            ranked = _rank_agencies(
-                agencies,
-                float(alert.location.latitude),
-                float(alert.location.longitude),
-            )
-        except Exception:
-            # No location on alert — fall back to type-only, all priority=1
-            ranked = [(a, None) for a in agencies]
+            # Rank agencies by proximity when the alert has a location.
+            # assignment_priority=1 means closest/highest priority.
+            try:
+                ranked = _rank_agencies(
+                    agencies,
+                    float(alert.location.latitude),
+                    float(alert.location.longitude),
+                )
+            except Exception:
+                # No location on alert ? fall back to type-only, all priority=1
+                ranked = [(a, None) for a in agencies]
 
-        assignments = [
-            AlertAssignment(alert=alert, agency=agency, assignment_priority=i + 1)
-            for i, (agency, _) in enumerate(ranked)
-        ]
-        AlertAssignment.objects.bulk_create(assignments)
+            assignments = [
+                AlertAssignment(alert=alert, agency=agency, assignment_priority=i + 1)
+                for i, (agency, _) in enumerate(ranked)
+            ]
+            AlertAssignment.objects.bulk_create(assignments)
 
-        alert.status = 'DISPATCHED'
-        alert.save(update_fields=['status'])
+            alert.status = 'DISPATCHED'
+            alert.save(update_fields=['status'])
 
-        dispatcher = NotificationDispatcher()
-        created_assignments = AlertAssignment.objects.filter(alert=alert).select_related(
-            'alert__user', 'alert__location', 'agency'
-        )
-        for assignment in created_assignments:
-            dispatcher.dispatch_alert(assignment)
+            if settings.ALERT_DISPATCH_ASYNC:
+                alert_id = alert.alert_id
+                transaction.on_commit(
+                    lambda alert_id=alert_id: enqueue_alert_dispatch(alert_id)
+                )
+            else:
+                dispatcher = NotificationDispatcher()
+                created_assignments = AlertAssignment.objects.filter(alert=alert).select_related(
+                    'alert__user', 'alert__location', 'agency'
+                )
+                for assignment in created_assignments:
+                    dispatcher.dispatch_alert(assignment)
 
         return Response(
             EmergencyAlertDetailSerializer(alert, context={'request': request}).data,

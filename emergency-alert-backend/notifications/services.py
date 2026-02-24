@@ -1,11 +1,74 @@
 import logging
+from threading import Thread
+
 import requests as http_requests
+from django.db import close_old_connections
+
 from .models import NotificationLog
 
 logger = logging.getLogger(__name__)
 
 # Maximum number of *retries* after the first attempt (total attempts = MAX_RETRIES + 1)
 MAX_RETRIES = 2
+
+
+def dispatch_alert_assignments(alert_id):
+    """
+    Background worker that dispatches all assignments for one alert.
+    Runs in a daemon thread so /api/alerts/create/ can return immediately.
+    """
+    close_old_connections()
+    logger.info(f"Async dispatch worker started for alert_id={alert_id}")
+
+    try:
+        from alerts.models import AlertAssignment
+
+        assignments = (
+            AlertAssignment.objects
+            .filter(alert_id=alert_id)
+            .select_related('alert__user', 'alert__location', 'agency')
+            .order_by('assignment_priority', 'assignment_id')
+        )
+
+        dispatcher = NotificationDispatcher()
+        total = 0
+        failed = 0
+
+        for assignment in assignments:
+            total += 1
+            try:
+                dispatcher.dispatch_alert(assignment)
+            except Exception:
+                failed += 1
+                logger.exception(
+                    f"Async dispatch failed for alert_id={alert_id}, "
+                    f"assignment_id={assignment.assignment_id}"
+                )
+
+        logger.info(
+            f"Async dispatch worker completed for alert_id={alert_id}: "
+            f"assignments={total}, failed={failed}"
+        )
+    except Exception:
+        logger.exception(f"Async dispatch worker crashed for alert_id={alert_id}")
+    finally:
+        close_old_connections()
+
+
+def enqueue_alert_dispatch(alert_id):
+    """
+    Enqueue dispatch for all assignments of an alert in a daemon thread.
+    Safe to call inside transaction.on_commit().
+    """
+    logger.info(f"Queueing async dispatch for alert_id={alert_id}")
+    thread = Thread(
+        target=dispatch_alert_assignments,
+        args=(alert_id,),
+        daemon=True,
+        name=f"alert-dispatch-{alert_id}",
+    )
+    thread.start()
+    return thread
 
 
 class NotificationDispatcher:

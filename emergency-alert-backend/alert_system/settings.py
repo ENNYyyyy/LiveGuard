@@ -149,9 +149,16 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'user': '100/hour',
-        'alert_creation': config('ALERT_CREATION_THROTTLE', default='5/hour'),
+        # Local development should be practical; production remains stricter.
+        'alert_creation': config(
+            'ALERT_CREATION_THROTTLE',
+            default='100/hour' if DEBUG else '5/hour',
+        ),
     },
 }
+
+# Dispatch notifications asynchronously after alert creation commit.
+ALERT_DISPATCH_ASYNC = config('ALERT_DISPATCH_ASYNC', cast=bool, default=True)
 
 # Simple JWT
 SIMPLE_JWT = {

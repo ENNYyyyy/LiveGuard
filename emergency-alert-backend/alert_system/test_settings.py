@@ -25,3 +25,6 @@ REST_FRAMEWORK = {
         'alert_creation': '100000/hour',
     },
 }
+
+# Keep tests deterministic and avoid thread timing issues under SQLite.
+ALERT_DISPATCH_ASYNC = False

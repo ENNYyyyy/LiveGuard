@@ -10,13 +10,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch, useSelector } from 'react-redux';
-import { createEmergencyAlert } from '../../store/alertSlice';
+import { createEmergencyAlert, fetchAlertHistory } from '../../store/alertSlice';
 import { getFullLocationData } from '../../services/locationService';
 import ChipSelector from '../../components/ChipSelector';
 import PrimaryButton from '../../components/PrimaryButton';
 import LoadingOverlay from '../../components/LoadingOverlay';
 import NoInternetBanner from '../../components/NoInternetBanner';
 import useNetInfo from '../../hooks/useNetInfo';
+import { navigationRef } from '../../navigation/navigationRef';
 import colors from '../../utils/colors';
 import { EMERGENCY_TYPES, PRIORITY_LEVELS } from '../../utils/constants';
 
@@ -24,13 +25,13 @@ const PENDING_ALERT_KEY = 'PENDING_ALERT';
 
 const EmergencyAlertScreen = ({ navigation }) => {
   const dispatch = useDispatch();
+  const submitError = useSelector((state) => state.alert.submitError);
   const { isConnected } = useNetInfo();
 
   const [selectedType, setSelectedType] = useState(null);
   const [selectedPriority, setSelectedPriority] = useState(null);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
-  const [submitError, setSubmitError] = useState(null);
   const [hasPendingAlert, setHasPendingAlert] = useState(false);
 
   // On mount: check for a cached pending alert
@@ -63,7 +64,6 @@ const EmergencyAlertScreen = ({ navigation }) => {
     if (!validate()) return;
 
     setLoading(true);
-    setSubmitError(null);
     try {
       // Fresh GPS
       const locationData = await getFullLocationData();
@@ -79,20 +79,26 @@ const EmergencyAlertScreen = ({ navigation }) => {
       const result = await dispatch(createEmergencyAlert(alertPayload));
 
       if (createEmergencyAlert.fulfilled.match(result)) {
-        // Clear any cached pending alert on success
-        await AsyncStorage.removeItem(PENDING_ALERT_KEY);
+        const createdAlertId = result.payload?.alert_id;
         setHasPendingAlert(false);
-        navigation.navigate('AlertStatusScreen');
+
+        // Navigate immediately for responsive UX, then refresh history in the background.
+        if (navigationRef.current) {
+          navigationRef.current.navigate('AlertStatusScreen', { alert_id: createdAlertId });
+        } else {
+          navigation.navigate('AlertStatusScreen', { alert_id: createdAlertId });
+        }
+
+        dispatch(fetchAlertHistory());
+        AsyncStorage.removeItem(PENDING_ALERT_KEY).catch(() => {});
       } else {
-        const msg = result.payload || 'Something went wrong. Please try again.';
-        setSubmitError(msg);
         // Cache the failed alert data for retry
         await AsyncStorage.setItem(PENDING_ALERT_KEY, JSON.stringify(alertPayload));
         setHasPendingAlert(false); // banner no longer needed since we just tried
       }
     } catch (err) {
       const msg = err?.message || 'Unable to get location. Please try again.';
-      setSubmitError(msg);
+      Alert.alert('Location Error', msg);
       // Cache what we can
       try {
         await AsyncStorage.setItem(

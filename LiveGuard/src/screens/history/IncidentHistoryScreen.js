@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   TouchableOpacity,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchAlertHistory } from '../../store/alertSlice';
@@ -17,17 +18,29 @@ import colors from '../../utils/colors';
 
 const IncidentHistoryScreen = ({ navigation }) => {
   const dispatch = useDispatch();
-  const { alertHistory, loading, error } = useSelector((state) => state.alert);
+  const { alertHistory, loading, historyError } = useSelector((state) => state.alert);
   const { isConnected } = useNetInfo();
+  const [refreshing, setRefreshing] = useState(false);
 
-  const doFetch = () => dispatch(fetchAlertHistory());
+  const doFetch = useCallback(() => dispatch(fetchAlertHistory()), [dispatch]);
 
-  useEffect(() => {
-    doFetch();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      doFetch();
+    }, [doFetch])
+  );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await dispatch(fetchAlertHistory()).unwrap();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [dispatch]);
 
   // Show API error state with retry (only when list is empty to avoid covering existing data)
-  if (error && !loading && alertHistory.length === 0) {
+  if (historyError && !loading && alertHistory.length === 0) {
     return (
       <SafeAreaView style={styles.safe}>
         <NoInternetBanner visible={!isConnected} />
@@ -79,6 +92,8 @@ const IncidentHistoryScreen = ({ navigation }) => {
           contentContainerStyle={styles.list}
           ListEmptyComponent={renderEmpty}
           showsVerticalScrollIndicator={false}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
         />
       )}
     </SafeAreaView>

@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../api/axiosConfig';
+import config from '../utils/config';
 
 export const createEmergencyAlert = createAsyncThunk(
   'alert/create',
@@ -7,7 +8,7 @@ export const createEmergencyAlert = createAsyncThunk(
     try {
       const { data } = await api.post('/api/alerts/create/', {
         alert_type, priority_level, description, latitude, longitude, accuracy,
-      });
+      }, { timeout: config.ALERT_TIMEOUT });
       return data;
     } catch (err) {
       const errData = err.response?.data;
@@ -83,7 +84,10 @@ const initialState = {
   alertStatus: null,
   submitting: false,
   loading: false,
-  error: null,
+  submitError: null,
+  statusError: null,
+  historyError: null,
+  cancelError: null,
 };
 
 const alertSlice = createSlice({
@@ -95,45 +99,60 @@ const alertSlice = createSlice({
       state.alertStatus = null;
     },
     clearAlertError: (state) => {
-      state.error = null;
+      state.submitError = null;
+      state.statusError = null;
+      state.historyError = null;
+      state.cancelError = null;
     },
   },
   extraReducers: (builder) => {
     // createEmergencyAlert
     builder
-      .addCase(createEmergencyAlert.pending, (state) => { state.submitting = true; state.error = null; })
+      .addCase(createEmergencyAlert.pending, (state) => {
+        state.submitting = true;
+        state.submitError = null;
+      })
       .addCase(createEmergencyAlert.fulfilled, (state, { payload }) => {
         state.submitting = false;
         state.currentAlert = payload;
+        state.submitError = null;
       })
       .addCase(createEmergencyAlert.rejected, (state, { payload }) => {
         state.submitting = false;
-        state.error = payload;
+        state.submitError = payload;
       });
 
     // fetchAlertStatus
     builder
-      .addCase(fetchAlertStatus.pending, (state) => { state.loading = true; })
+      .addCase(fetchAlertStatus.pending, (state) => {
+        state.loading = true;
+        state.statusError = null;
+      })
       .addCase(fetchAlertStatus.fulfilled, (state, { payload }) => {
         state.loading = false;
         state.alertStatus = payload;
         state.currentAlert = payload;  // keep currentAlert fresh so AlertStatusScreen reflects updates
+        state.statusError = null;
       })
       .addCase(fetchAlertStatus.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = payload;
+        state.statusError = payload;
       });
 
     // fetchAlertHistory
     builder
-      .addCase(fetchAlertHistory.pending, (state) => { state.loading = true; })
+      .addCase(fetchAlertHistory.pending, (state) => {
+        state.loading = true;
+        state.historyError = null;
+      })
       .addCase(fetchAlertHistory.fulfilled, (state, { payload }) => {
         state.loading = false;
         state.alertHistory = payload;
+        state.historyError = null;
       })
       .addCase(fetchAlertHistory.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = payload;
+        state.historyError = payload;
       });
 
     // cancelAlert — backend returns { message, alert_id }, not a full alert object
@@ -143,9 +162,10 @@ const alertSlice = createSlice({
           state.currentAlert = { ...state.currentAlert, status: 'CANCELLED' };
         }
         state.alertStatus = 'CANCELLED';
+        state.cancelError = null;
       })
       .addCase(cancelAlert.rejected, (state, { payload }) => {
-        state.error = payload;
+        state.cancelError = payload;
       });
   },
 });

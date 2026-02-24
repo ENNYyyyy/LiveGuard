@@ -8,6 +8,7 @@ import {
   Linking,
   Alert,
 } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -38,9 +39,17 @@ const TERMINAL_STATUSES = ['RESOLVED', 'CANCELLED'];
 
 const AlertStatusScreen = ({ navigation, route }) => {
   const dispatch = useDispatch();
-  const { currentAlert, loading, error } = useSelector((state) => state.alert);
+  const { currentAlert, loading, statusError } = useSelector((state) => state.alert);
   const { isConnected } = useNetInfo();
+  const isFocused = useIsFocused();
   const locationSubscription = useRef(null);
+
+  const goHome = () => {
+    navigation.navigate('MainDrawer', {
+      screen: 'MainTabs',
+      params: { screen: 'HomeTab' },
+    });
+  };
 
   const alertId =
     route?.params?.alert_id ?? route?.params?.alertId ?? currentAlert?.alert_id;
@@ -51,15 +60,16 @@ const AlertStatusScreen = ({ navigation, route }) => {
   };
 
   useEffect(() => {
+    if (!isFocused || !alertId) return;
     doFetch();
     if (isTerminal) return;
     const interval = setInterval(doFetch, 5000);
     return () => clearInterval(interval);
-  }, [isTerminal, alertId]);
+  }, [isFocused, isTerminal, alertId]);
 
   // Stream live location to the server while alert is active
   useEffect(() => {
-    if (isTerminal || !alertId) return;
+    if (!isFocused || isTerminal || !alertId) return;
 
     (async () => {
       const { status: permStatus } = await Location.requestForegroundPermissionsAsync();
@@ -86,7 +96,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
       locationSubscription.current?.remove();
       locationSubscription.current = null;
     };
-  }, [isTerminal, alertId]);
+  }, [isFocused, isTerminal, alertId]);
 
   // Use first assignment for ETA display; render all assignments below
   const firstAck = currentAlert?.assignments?.[0]?.acknowledgment;
@@ -99,7 +109,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
         style: 'destructive',
         onPress: async () => {
           await dispatch(cancelAlert(currentAlert?.alert_id));
-          navigation.navigate('HomeTab');
+          goHome();
         },
       },
     ]);
@@ -111,7 +121,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
         <NoInternetBanner visible={!isConnected} />
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>No active alert</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('HomeTab')}>
+          <TouchableOpacity onPress={goHome}>
             <Text style={styles.goHome}>Go Home</Text>
           </TouchableOpacity>
         </View>
@@ -138,7 +148,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
       </View>
 
       {/* API error bar with retry */}
-      {error && !loading ? (
+      {statusError && !loading ? (
         <TouchableOpacity style={styles.apiErrorBar} onPress={doFetch} activeOpacity={0.8}>
           <Text style={styles.apiErrorText}>
             Unable to load alert status. Check your connection.
@@ -241,7 +251,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
           {['RESOLVED', 'CANCELLED'].includes(currentAlert.status) && (
             <TouchableOpacity
               style={styles.doneBtn}
-              onPress={() => navigation.navigate('HomeTab')}
+              onPress={goHome}
             >
               <Text style={styles.doneBtnText}>Back to Home</Text>
             </TouchableOpacity>
