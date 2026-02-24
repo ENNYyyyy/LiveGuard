@@ -10,7 +10,16 @@ export const createEmergencyAlert = createAsyncThunk(
       });
       return data;
     } catch (err) {
-      return rejectWithValue(err.response?.data?.detail || 'Failed to send alert. Please try again.');
+      const errData = err.response?.data;
+      if (errData) {
+        if (errData.detail) return rejectWithValue(errData.detail);
+        // DRF field-level errors: { field: ["msg", ...], ... }
+        const fieldErrors = Object.entries(errData)
+          .map(([field, msgs]) => `${field}: ${Array.isArray(msgs) ? msgs[0] : msgs}`)
+          .join('; ');
+        if (fieldErrors) return rejectWithValue(fieldErrors);
+      }
+      return rejectWithValue('Failed to send alert. Please try again.');
     }
   }
 );

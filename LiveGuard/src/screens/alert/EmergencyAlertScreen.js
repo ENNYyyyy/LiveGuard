@@ -71,8 +71,8 @@ const EmergencyAlertScreen = ({ navigation }) => {
       const alertPayload = {
         alert_type:     selectedType,
         priority_level: selectedPriority,
-        latitude:       locationData.latitude,
-        longitude:      locationData.longitude,
+        latitude:       parseFloat(locationData.latitude.toFixed(7)),
+        longitude:      parseFloat(locationData.longitude.toFixed(7)),
         accuracy:       locationData.accuracy,
       };
 

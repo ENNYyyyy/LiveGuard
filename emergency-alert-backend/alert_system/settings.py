@@ -149,7 +149,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'user': '100/hour',
-        'alert_creation': '5/hour',
+        'alert_creation': config('ALERT_CREATION_THROTTLE', default='5/hour'),
     },
 }
 
