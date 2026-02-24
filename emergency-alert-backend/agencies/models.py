@@ -1,5 +1,5 @@
 from django.db import models
-from django.db.models import AutoField, CharField, EmailField, TextField, IntegerField, BooleanField, ForeignKey, OneToOneField, CASCADE
+from django.db.models import AutoField, CharField, EmailField, TextField, IntegerField, BooleanField, ForeignKey, OneToOneField, CASCADE, DecimalField
 
 
 class SecurityAgency(models.Model):
@@ -21,6 +21,9 @@ class SecurityAgency(models.Model):
     address = TextField()
     is_active = BooleanField(default=True)
     fcm_token = TextField(blank=True, null=True)
+    # Optional geo coordinates — enables proximity-aware dispatch when set
+    latitude  = DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    longitude = DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
 
     def __str__(self):
         return self.agency_name

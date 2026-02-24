@@ -1,5 +1,5 @@
 from django.db import models
-from django.db.models import AutoField, CharField, OneToOneField, CASCADE, GenericIPAddressField
+from django.db.models import AutoField, CharField, TextField, OneToOneField, CASCADE, GenericIPAddressField, DateTimeField
 
 
 class SystemAdmin(models.Model):
@@ -16,3 +16,17 @@ class SystemAdmin(models.Model):
 
     def __str__(self):
         return f"{self.user} ({self.admin_level})"
+
+
+class SystemSetting(models.Model):
+    """
+    Operational key-value settings editable by admin without server redeployment.
+    No secrets are stored here — only runtime-tunable operational values.
+    """
+    key         = CharField(max_length=100, unique=True)
+    value       = CharField(max_length=500)
+    description = TextField(blank=True)
+    updated_at  = DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.key} = {self.value}"

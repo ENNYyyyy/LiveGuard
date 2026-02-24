@@ -2,6 +2,8 @@ from rest_framework import serializers
 from agencies.models import SecurityAgency, AgencyUser
 from alerts.models import EmergencyAlert, AlertAssignment, Acknowledgment
 from accounts.models import User
+from notifications.models import NotificationLog
+from .models import SystemSetting
 
 
 # ─── Agency ───────────────────────────────────────────────────────────────────
@@ -146,3 +148,28 @@ class CivilianUserSerializer(serializers.ModelSerializer):
 
     def get_alert_count(self, obj):
         return obj.alerts.count()
+
+
+# ─── Notification logs ────────────────────────────────────────────────────────
+
+class NotificationLogSerializer(serializers.ModelSerializer):
+    alert_id      = serializers.IntegerField(source='assignment.alert.alert_id', read_only=True)
+    agency_name   = serializers.CharField(source='assignment.agency.agency_name', read_only=True)
+    assignment_id = serializers.IntegerField(source='assignment.assignment_id', read_only=True)
+
+    class Meta:
+        model  = NotificationLog
+        fields = [
+            'log_id', 'assignment_id', 'alert_id', 'agency_name',
+            'channel_type', 'recipient', 'delivery_status',
+            'retry_count', 'error_message', 'sent_at',
+        ]
+
+
+# ─── System settings ──────────────────────────────────────────────────────────
+
+class SystemSettingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = SystemSetting
+        fields = ['key', 'value', 'description', 'updated_at']
+        read_only_fields = ['key', 'description', 'updated_at']

@@ -4,6 +4,9 @@ from .models import NotificationLog
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of *retries* after the first attempt (total attempts = MAX_RETRIES + 1)
+MAX_RETRIES = 2
+
 
 class NotificationDispatcher:
     """
@@ -254,147 +257,156 @@ class NotificationDispatcher:
             raise ValueError(f"Expo push error: {ticket.get('message')}")
         return result
 
+    # ------------------------------------------------------------------
+    # Retry helper
+    # ------------------------------------------------------------------
+
+    def _send_with_retry(self, send_fn, assignment, channel_type, recipient):
+        """
+        Call send_fn() up to (MAX_RETRIES + 1) times.
+        Persists one NotificationLog row per attempt with the correct retry_count.
+        Returns True if any attempt succeeded; never raises an exception to the caller.
+        One channel's failure does not affect sibling channels.
+        """
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                send_fn()
+                NotificationLog.objects.create(
+                    assignment=assignment,
+                    channel_type=channel_type,
+                    recipient=recipient,
+                    delivery_status='SENT',
+                    retry_count=attempt,
+                )
+                logger.info(
+                    f"{channel_type} delivered (attempt {attempt + 1}) to {recipient}"
+                )
+                return True
+            except Exception as e:
+                NotificationLog.objects.create(
+                    assignment=assignment,
+                    channel_type=channel_type,
+                    recipient=recipient,
+                    delivery_status='FAILED',
+                    error_message=str(e),
+                    retry_count=attempt,
+                )
+                if attempt < MAX_RETRIES:
+                    logger.warning(
+                        f"{channel_type} attempt {attempt + 1} failed for {recipient}, "
+                        f"retrying: {e}"
+                    )
+                else:
+                    logger.error(
+                        f"{channel_type} all {MAX_RETRIES + 1} attempts failed "
+                        f"for {recipient}: {e}"
+                    )
+        return False
+
+    # ------------------------------------------------------------------
+    # Push / SMS / Email — each uses _send_with_retry
+    # ------------------------------------------------------------------
+
     def _send_push(self, assignment, agency, alert_data):
         """
         Send push notification to the agency device.
         Routes to Expo Push API or Firebase Admin SDK based on token format.
         """
-        try:
-            if not agency.fcm_token:
-                raise ValueError("No FCM token registered for this agency")
+        if not agency.fcm_token:
+            NotificationLog.objects.create(
+                assignment=assignment,
+                channel_type='PUSH',
+                recipient='NO_TOKEN',
+                delivery_status='FAILED',
+                error_message='No FCM token registered for this agency.',
+                retry_count=0,
+            )
+            logger.error(f"Push skipped for {agency.agency_name}: no token")
+            return
 
-            title = f"EMERGENCY: {alert_data['alert_type']}"
-            body = f"Priority: {alert_data['priority']}. Location: {alert_data['address']}"
+        title = f"EMERGENCY: {alert_data['alert_type']}"
+        body = f"Priority: {alert_data['priority']}. Location: {alert_data['address']}"
 
+        def _do_push():
             if agency.fcm_token.startswith('ExponentPushToken'):
-                # Agency app built with Expo — use Expo Push API
                 self._send_expo_push(
-                    token=agency.fcm_token,
-                    title=title,
-                    body=body,
-                    data=alert_data,
+                    token=agency.fcm_token, title=title, body=body, data=alert_data
                 )
-                response_info = 'sent via Expo Push API'
             else:
-                # Native FCM token — use Firebase Admin SDK
                 from firebase_admin import messaging
-                message = messaging.Message(
+                msg = messaging.Message(
                     notification=messaging.Notification(title=title, body=body),
                     data={k: str(v) for k, v in alert_data.items()},
                     token=agency.fcm_token,
                 )
-                response_info = messaging.send(message)
+                messaging.send(msg)
 
-            NotificationLog.objects.create(
-                assignment=assignment,
-                channel_type='PUSH',
-                recipient=agency.fcm_token[:50],
-                delivery_status='SENT',
-            )
-            logger.info(f"Push sent to {agency.agency_name}: {response_info}")
-
-        except Exception as e:
-            NotificationLog.objects.create(
-                assignment=assignment,
-                channel_type='PUSH',
-                recipient=agency.fcm_token[:50] if agency.fcm_token else 'NO_TOKEN',
-                delivery_status='FAILED',
-                error_message=str(e),
-            )
-            logger.error(f"Push failed for {agency.agency_name}: {e}")
+        self._send_with_retry(_do_push, assignment, 'PUSH', agency.fcm_token[:50])
 
     # ------------------------------------------------------------------
     # SMS / Email
     # ------------------------------------------------------------------
 
     def _send_sms(self, assignment, agency, alert_data):
-        """Send SMS to agency contact phone."""
-        try:
+        """Send SMS to agency contact phone (with retry)."""
+        message_body = (
+            f"EMERGENCY ALERT [{alert_data['alert_type']}]\n"
+            f"Priority: {alert_data['priority']}\n"
+            f"Location: {alert_data['address']}\n"
+            f"Coordinates: {alert_data['latitude']}, {alert_data['longitude']}\n"
+            f"Reporter: {alert_data['user_name']} ({alert_data['user_phone']})\n"
+            f"Map: {alert_data['maps_url']}\n"
+            f"Alert ID: {alert_data['alert_id']}"
+        )
+
+        def _do_sms():
             from twilio.rest import Client
             from decouple import config
-
             client = Client(config('TWILIO_ACCOUNT_SID'), config('TWILIO_AUTH_TOKEN'))
-            message_body = (
-                f"EMERGENCY ALERT [{alert_data['alert_type']}]\n"
-                f"Priority: {alert_data['priority']}\n"
-                f"Location: {alert_data['address']}\n"
-                f"Coordinates: {alert_data['latitude']}, {alert_data['longitude']}\n"
-                f"Reporter: {alert_data['user_name']} ({alert_data['user_phone']})\n"
-                f"Map: {alert_data['maps_url']}\n"
-                f"Alert ID: {alert_data['alert_id']}"
-            )
-            sms = client.messages.create(
+            client.messages.create(
                 body=message_body,
                 from_=config('TWILIO_PHONE_NUMBER'),
                 to=agency.contact_phone,
             )
-            NotificationLog.objects.create(
-                assignment=assignment,
-                channel_type='SMS',
-                recipient=agency.contact_phone,
-                delivery_status='SENT',
-            )
-            logger.info(f"SMS sent to {agency.agency_name}: {sms.sid}")
 
-        except Exception as e:
-            NotificationLog.objects.create(
-                assignment=assignment,
-                channel_type='SMS',
-                recipient=agency.contact_phone,
-                delivery_status='FAILED',
-                error_message=str(e),
-            )
-            logger.error(f"SMS failed for {agency.agency_name}: {e}")
+        self._send_with_retry(_do_sms, assignment, 'SMS', agency.contact_phone)
 
     def _send_email(self, assignment, agency, alert_data):
-        """Send email alert to agency."""
-        try:
+        """Send email alert to agency (with retry)."""
+        subject = (
+            f"EMERGENCY ALERT: {alert_data['alert_type']} - Priority {alert_data['priority']}"
+        )
+        email_body = (
+            f"EMERGENCY ALERT\n"
+            f"{'=' * 50}\n\n"
+            f"Type: {alert_data['alert_type']}\n"
+            f"Priority: {alert_data['priority']}\n"
+            f"Time: {alert_data['timestamp']}\n\n"
+            f"LOCATION\n"
+            f"Address: {alert_data['address']}\n"
+            f"Coordinates: {alert_data['latitude']}, {alert_data['longitude']}\n"
+            f"Google Maps: {alert_data['maps_url']}\n\n"
+            f"REPORTER\n"
+            f"Name: {alert_data['user_name']}\n"
+            f"Phone: {alert_data['user_phone']}\n\n"
+            f"DESCRIPTION\n"
+            f"{alert_data['description']}\n\n"
+            f"Alert ID: {alert_data['alert_id']}\n"
+            f"Please acknowledge this alert through the system."
+        )
+
+        def _do_email():
             from django.core.mail import send_mail
             from decouple import config
-
-            subject = f"EMERGENCY ALERT: {alert_data['alert_type']} - Priority {alert_data['priority']}"
-            body = (
-                f"EMERGENCY ALERT\n"
-                f"{'=' * 50}\n\n"
-                f"Type: {alert_data['alert_type']}\n"
-                f"Priority: {alert_data['priority']}\n"
-                f"Time: {alert_data['timestamp']}\n\n"
-                f"LOCATION\n"
-                f"Address: {alert_data['address']}\n"
-                f"Coordinates: {alert_data['latitude']}, {alert_data['longitude']}\n"
-                f"Google Maps: {alert_data['maps_url']}\n\n"
-                f"REPORTER\n"
-                f"Name: {alert_data['user_name']}\n"
-                f"Phone: {alert_data['user_phone']}\n\n"
-                f"DESCRIPTION\n"
-                f"{alert_data['description']}\n\n"
-                f"Alert ID: {alert_data['alert_id']}\n"
-                f"Please acknowledge this alert through the system."
-            )
             send_mail(
                 subject=subject,
-                message=body,
+                message=email_body,
                 from_email=config('DEFAULT_FROM_EMAIL'),
                 recipient_list=[agency.contact_email],
                 fail_silently=False,
             )
-            NotificationLog.objects.create(
-                assignment=assignment,
-                channel_type='EMAIL',
-                recipient=agency.contact_email,
-                delivery_status='SENT',
-            )
-            logger.info(f"Email sent to {agency.agency_name}")
 
-        except Exception as e:
-            NotificationLog.objects.create(
-                assignment=assignment,
-                channel_type='EMAIL',
-                recipient=agency.contact_email,
-                delivery_status='FAILED',
-                error_message=str(e),
-            )
-            logger.error(f"Email failed for {agency.agency_name}: {e}")
+        self._send_with_retry(_do_email, assignment, 'EMAIL', agency.contact_email)
 
     def _update_assignment_status(self, assignment):
         """Update assignment notification_status based on channel results."""

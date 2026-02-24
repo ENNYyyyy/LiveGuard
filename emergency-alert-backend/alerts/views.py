@@ -1,3 +1,4 @@
+import math
 from decimal import Decimal, InvalidOperation
 
 from rest_framework import status
@@ -28,6 +29,41 @@ ALERT_TYPE_AGENCY_MAP = {
 }
 
 
+def _haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance in kilometres (Haversine formula)."""
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _rank_agencies(agencies, alert_lat, alert_lng):
+    """
+    Sort agencies by distance from the alert location.
+    Agencies that have geo coordinates (latitude/longitude set) are ranked
+    closest-first and assigned higher priority (lower priority number).
+    Agencies without coordinates are appended at the end — they still receive
+    the alert but at lower priority.  This is the deterministic fallback for
+    agencies that have not yet had coordinates entered in the admin panel.
+
+    Returns a list of (agency, distance_km_or_None) tuples in priority order.
+    """
+    with_geo, without_geo = [], []
+    for agency in agencies:
+        if agency.latitude is not None and agency.longitude is not None:
+            dist = _haversine_km(
+                alert_lat, alert_lng,
+                float(agency.latitude), float(agency.longitude),
+            )
+            with_geo.append((agency, dist))
+        else:
+            without_geo.append((agency, None))
+    with_geo.sort(key=lambda x: x[1])
+    return with_geo + without_geo
+
+
 class CreateEmergencyAlertView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [AlertCreationThrottle]
@@ -42,13 +78,25 @@ class CreateEmergencyAlertView(APIView):
         alert = serializer.save(user=request.user)
 
         agency_types = ALERT_TYPE_AGENCY_MAP.get(alert.alert_type, ['POLICE'])
-        agencies = SecurityAgency.objects.filter(
+        agencies = list(SecurityAgency.objects.filter(
             agency_type__in=agency_types, is_active=True
-        )
+        ))
+
+        # Rank agencies by proximity when the alert has a location.
+        # assignment_priority=1 means closest/highest priority.
+        try:
+            ranked = _rank_agencies(
+                agencies,
+                float(alert.location.latitude),
+                float(alert.location.longitude),
+            )
+        except Exception:
+            # No location on alert — fall back to type-only, all priority=1
+            ranked = [(a, None) for a in agencies]
 
         assignments = [
-            AlertAssignment(alert=alert, agency=agency)
-            for agency in agencies
+            AlertAssignment(alert=alert, agency=agency, assignment_priority=i + 1)
+            for i, (agency, _) in enumerate(ranked)
         ]
         AlertAssignment.objects.bulk_create(assignments)
 

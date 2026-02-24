@@ -27,7 +27,8 @@ SECRET_KEY = config('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', cast=bool)
 
-ALLOWED_HOSTS = ['*']  # Development only — restrict in production
+# Comma-separated hosts in production, e.g. ALLOWED_HOSTS=api.example.com,www.example.com
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*').split(',')
 
 
 # Application definition
@@ -161,8 +162,12 @@ SIMPLE_JWT = {
     'USER_ID_CLAIM': 'user_id',
 }
 
-# CORS
-CORS_ALLOW_ALL_ORIGINS = True  # Development only
+# CORS — set CORS_ALLOW_ALL_ORIGINS=False in production and supply CORS_ALLOWED_ORIGINS
+CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', cast=bool, default=True)
+if not CORS_ALLOW_ALL_ORIGINS:
+    CORS_ALLOWED_ORIGINS = [
+        o.strip() for o in config('CORS_ALLOWED_ORIGINS', default='').split(',') if o.strip()
+    ]
 
 # Email
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'

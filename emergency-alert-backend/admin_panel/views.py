@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.utils import timezone
+from django.db.models import Count, Avg, Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -9,8 +10,10 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from agencies.models import SecurityAgency
 from alerts.models import EmergencyAlert, AlertAssignment
 from accounts.models import User
+from notifications.models import NotificationLog
 from notifications.services import NotificationDispatcher
 
+from .models import SystemSetting
 from .serializers import (
     AgencyListSerializer,
     AgencyDetailSerializer,
@@ -18,6 +21,8 @@ from .serializers import (
     AlertListAdminSerializer,
     AlertDetailAdminSerializer,
     CivilianUserSerializer,
+    NotificationLogSerializer,
+    SystemSettingSerializer,
 )
 
 
@@ -236,3 +241,150 @@ class CivilianUserListView(APIView):
             .order_by('-date_joined')
         )
         return Response(CivilianUserSerializer(users, many=True).data)
+
+
+# ─── Notification logs ────────────────────────────────────────────────────────
+
+class NotificationLogListView(APIView):
+    """
+    GET /api/admin/notifications/
+    Read-only view of all notification delivery attempts.
+    Optional query params: ?channel=PUSH|SMS|EMAIL  ?status=SENT|FAILED  ?assignment=<id>
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        qs = (
+            NotificationLog.objects
+            .select_related('assignment__alert', 'assignment__agency')
+            .order_by('-sent_at')
+        )
+        if ch := request.query_params.get('channel'):
+            qs = qs.filter(channel_type=ch.upper())
+        if st := request.query_params.get('status'):
+            qs = qs.filter(delivery_status=st.upper())
+        if aid := request.query_params.get('assignment'):
+            qs = qs.filter(assignment_id=aid)
+        return Response(NotificationLogSerializer(qs, many=True).data)
+
+
+# ─── Reports ──────────────────────────────────────────────────────────────────
+
+class ReportsView(APIView):
+    """
+    GET /api/admin/reports/
+    Aggregated operational metrics for the admin dashboard.
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        now = timezone.now()
+
+        # Alert volume by period
+        def alert_count(days):
+            return EmergencyAlert.objects.filter(
+                created_at__gte=now - timedelta(days=days)
+            ).count()
+
+        # Notification delivery rates per channel
+        def channel_stats(channel):
+            logs = NotificationLog.objects.filter(channel_type=channel)
+            total = logs.count()
+            sent  = logs.filter(delivery_status='SENT').count()
+            return {
+                'total':        total,
+                'sent':         sent,
+                'failed':       total - sent,
+                'success_rate': round(sent / total * 100, 1) if total else None,
+            }
+
+        # Average response time (assigned_at → response_time) per agency type
+        responded = AlertAssignment.objects.filter(response_time__isnull=False).select_related('agency')
+        agency_response = {}
+        for asgmt in responded:
+            atype = asgmt.agency.agency_type
+            delta = (asgmt.response_time - asgmt.assigned_at).total_seconds()
+            agency_response.setdefault(atype, []).append(delta)
+        avg_response_by_type = {
+            k: round(sum(v) / len(v))
+            for k, v in agency_response.items()
+        }
+
+        return Response({
+            'alert_volume': {
+                'last_24h':  alert_count(1),
+                'last_7d':   alert_count(7),
+                'last_30d':  alert_count(30),
+                'all_time':  EmergencyAlert.objects.count(),
+            },
+            'alert_types': {
+                t: EmergencyAlert.objects.filter(alert_type=t).count()
+                for t, _ in EmergencyAlert.ALERT_TYPES
+            },
+            'alert_statuses': {
+                s: EmergencyAlert.objects.filter(status=s).count()
+                for s, _ in EmergencyAlert.STATUSES
+            },
+            'notification_delivery': {
+                'PUSH':  channel_stats('PUSH'),
+                'SMS':   channel_stats('SMS'),
+                'EMAIL': channel_stats('EMAIL'),
+            },
+            'avg_response_seconds_by_agency_type': avg_response_by_type,
+            'generated_at': now.isoformat(),
+        })
+
+
+# ─── System settings ──────────────────────────────────────────────────────────
+
+# Default operational settings pre-populated on first access.
+# No secrets — only runtime-tunable operational values.
+_DEFAULT_SETTINGS = [
+    ('alert_creation_rate_limit', '5',    'Max alerts a civilian can create per hour'),
+    ('user_rate_limit',           '100',  'Max API requests per user per hour'),
+    ('max_notification_retries',  '2',    'Maximum retry attempts per notification channel'),
+    ('alert_polling_interval_s',  '5',    'Frontend polling interval in seconds (informational)'),
+    ('location_update_interval_m','15',   'Min metres moved before location update is sent (informational)'),
+]
+
+
+class SystemSettingsView(APIView):
+    """
+    GET  /api/admin/settings/ — list all operational settings
+    PATCH /api/admin/settings/ — update one or more values by key
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def _ensure_defaults(self):
+        for key, value, description in _DEFAULT_SETTINGS:
+            SystemSetting.objects.get_or_create(
+                key=key,
+                defaults={'value': value, 'description': description},
+            )
+
+    def get(self, request):
+        self._ensure_defaults()
+        settings = SystemSetting.objects.all().order_by('key')
+        return Response(SystemSettingSerializer(settings, many=True).data)
+
+    def patch(self, request):
+        self._ensure_defaults()
+        if not isinstance(request.data, dict):
+            return Response(
+                {'error': 'Expected a JSON object of {key: new_value} pairs.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        updated = []
+        errors  = {}
+        for key, value in request.data.items():
+            try:
+                setting = SystemSetting.objects.get(key=key)
+                setting.value = str(value)
+                setting.save(update_fields=['value', 'updated_at'])
+                updated.append(key)
+            except SystemSetting.DoesNotExist:
+                errors[key] = 'Unknown setting key.'
+        response = {'updated': updated}
+        if errors:
+            response['errors'] = errors
+        return Response(response, status=status.HTTP_200_OK if updated else status.HTTP_400_BAD_REQUEST)

@@ -7,6 +7,9 @@ from .views import (
     AlertDetailView,
     AlertAssignView,
     CivilianUserListView,
+    NotificationLogListView,
+    ReportsView,
+    SystemSettingsView,
 )
 
 urlpatterns = [
@@ -24,4 +27,13 @@ urlpatterns = [
 
     # User management
     path('users/', CivilianUserListView.as_view(), name='admin-user-list'),
+
+    # Notification audit trail
+    path('notifications/', NotificationLogListView.as_view(), name='admin-notification-logs'),
+
+    # Aggregated reports
+    path('reports/', ReportsView.as_view(), name='admin-reports'),
+
+    # Operational system settings
+    path('settings/', SystemSettingsView.as_view(), name='admin-settings'),
 ]
