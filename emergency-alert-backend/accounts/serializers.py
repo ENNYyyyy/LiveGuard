@@ -1,6 +1,7 @@
 import re
 from rest_framework import serializers
 from django.contrib.auth import authenticate
+from django.core.exceptions import ObjectDoesNotExist
 from .models import User
 
 NIGERIAN_PHONE_RE = re.compile(r'^\+234[789][01]\d{8}$|^0[789][01]\d{8}$')
@@ -47,6 +48,10 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 class UserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+    client_type = serializers.ChoiceField(
+        choices=['AGENCY', 'CIVILIAN'],
+        required=False,
+    )
 
     def validate(self, attrs):
         user = authenticate(
@@ -63,17 +68,51 @@ class UserLoginSerializer(serializers.Serializer):
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    role = serializers.SerializerMethodField()
+    is_agency_user = serializers.SerializerMethodField()
+    agency_id = serializers.SerializerMethodField()
+    agency_name = serializers.SerializerMethodField()
+    agency_role = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
             'user_id', 'full_name', 'email', 'phone_number',
             'emergency_contact_name', 'emergency_contact_phone',
             'address', 'date_joined',
+            'role', 'is_agency_user', 'agency_id', 'agency_name', 'agency_role',
         ]
-        read_only_fields = ['user_id', 'email', 'date_joined']
+        read_only_fields = [
+            'user_id', 'email', 'date_joined',
+            'role', 'is_agency_user', 'agency_id', 'agency_name', 'agency_role',
+        ]
 
     def validate_phone_number(self, value):
         return validate_nigerian_phone(value)
 
     def validate_emergency_contact_phone(self, value):
         return validate_nigerian_phone(value)
+
+    def _agency_profile(self, obj):
+        try:
+            return obj.agency_profile
+        except ObjectDoesNotExist:
+            return None
+
+    def get_role(self, obj):
+        return 'AGENCY' if self._agency_profile(obj) else 'CIVILIAN'
+
+    def get_is_agency_user(self, obj):
+        return bool(self._agency_profile(obj))
+
+    def get_agency_id(self, obj):
+        profile = self._agency_profile(obj)
+        return profile.agency.agency_id if profile else None
+
+    def get_agency_name(self, obj):
+        profile = self._agency_profile(obj)
+        return profile.agency.agency_name if profile else None
+
+    def get_agency_role(self, obj):
+        profile = self._agency_profile(obj)
+        return profile.role if profile else None

@@ -6,6 +6,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 
 from .models import User
+from alert_system.api_responses import error_response, derive_detail_from_errors
 from .serializers import (
     UserRegistrationSerializer,
     UserLoginSerializer,
@@ -25,7 +26,18 @@ class RegisterView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = UserRegistrationSerializer(data=request.data)
+        request_data = request.data.copy()
+        client_type = request_data.get('client_type')
+        request_data.pop('client_type', None)
+
+        if client_type == 'AGENCY':
+            return error_response(
+                detail='Agency accounts are provisioned by system administrators.',
+                status_code=status.HTTP_403_FORBIDDEN,
+                errors={'client_type': ['Agency self-signup is not supported.']},
+            )
+
+        serializer = UserRegistrationSerializer(data=request_data)
         if serializer.is_valid():
             user = serializer.save()
             tokens = get_tokens_for_user(user)
@@ -37,7 +49,12 @@ class RegisterView(APIView):
                 },
                 status=status.HTTP_201_CREATED,
             )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return error_response(
+            detail=derive_detail_from_errors(serializer.errors),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            errors=serializer.errors,
+            include_legacy_error=False,
+        )
 
 
 class LoginView(APIView):
@@ -47,6 +64,15 @@ class LoginView(APIView):
         serializer = UserLoginSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             user = serializer.validated_data['user']
+            client_type = serializer.validated_data.get('client_type')
+
+            if client_type == 'AGENCY' and not hasattr(user, 'agency_profile'):
+                return error_response(
+                    detail='Agency login is restricted to agency accounts.',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    errors={'client_type': ['This account is not linked to an agency profile.']},
+                )
+
             tokens = get_tokens_for_user(user)
             return Response(
                 {
@@ -56,7 +82,12 @@ class LoginView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
-        return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
+        return error_response(
+            detail=derive_detail_from_errors(serializer.errors, default='Login failed.'),
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            errors=serializer.errors,
+            include_legacy_error=False,
+        )
 
 
 class ProfileView(APIView):
@@ -73,7 +104,12 @@ class ProfileView(APIView):
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return error_response(
+            detail=derive_detail_from_errors(serializer.errors),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            errors=serializer.errors,
+            include_legacy_error=False,
+        )
 
 
 class RegisterDeviceView(APIView):
@@ -82,9 +118,9 @@ class RegisterDeviceView(APIView):
     def post(self, request):
         push_token = request.data.get('push_token')
         if not push_token:
-            return Response(
-                {'error': 'push_token is required.'},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                detail='push_token is required.',
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         request.user.push_token = push_token
         request.user.save(update_fields=['push_token'])
@@ -100,13 +136,16 @@ class LogoutView(APIView):
     def post(self, request):
         refresh_token = request.data.get('refresh')
         if not refresh_token:
-            return Response(
-                {'error': 'Refresh token is required.'},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                detail='Refresh token is required.',
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
         try:
             token = RefreshToken(refresh_token)
             token.blacklist()
         except TokenError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                detail=str(e),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
         return Response({'message': 'Logged out successfully.'}, status=status.HTTP_200_OK)

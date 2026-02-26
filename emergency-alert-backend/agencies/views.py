@@ -9,6 +9,7 @@ from alerts.serializers import AlertAssignmentSerializer, AcknowledgmentSerializ
 from .serializers import AcknowledgeAlertSerializer
 from notifications.services import NotificationDispatcher
 from alert_system.permissions import IsAgencyUser
+from alert_system.api_responses import error_response, derive_detail_from_errors
 
 
 class AgencyAlertListView(APIView):
@@ -40,17 +41,25 @@ class AcknowledgeAlertView(APIView):
                 'alert__user', 'agency'
             ).get(assignment_id=assignment_id, agency=agency)
         except AlertAssignment.DoesNotExist:
-            return Response({'error': 'Assignment not found.'}, status=status.HTTP_404_NOT_FOUND)
+            return error_response(
+                detail='Assignment not found.',
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
 
         if hasattr(assignment, 'acknowledgment'):
-            return Response(
-                {'error': 'This assignment has already been acknowledged.'},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                detail='This assignment has already been acknowledged.',
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
 
         serializer = AcknowledgeAlertSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                detail=derive_detail_from_errors(serializer.errors),
+                status_code=status.HTTP_400_BAD_REQUEST,
+                errors=serializer.errors,
+                include_legacy_error=False,
+            )
 
         acknowledgment = Acknowledgment.objects.create(
             assignment=assignment,
@@ -92,9 +101,9 @@ class UpdateAlertStatusView(APIView):
         new_status = request.data.get('status')
 
         if new_status not in self.ALLOWED_STATUSES:
-            return Response(
-                {'error': f"Status must be one of: {', '.join(self.ALLOWED_STATUSES)}."},
-                status=status.HTTP_400_BAD_REQUEST,
+            return error_response(
+                detail=f"Status must be one of: {', '.join(self.ALLOWED_STATUSES)}.",
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
@@ -102,7 +111,10 @@ class UpdateAlertStatusView(APIView):
                 'alert__user'
             ).get(assignment_id=assignment_id, agency=agency)
         except AlertAssignment.DoesNotExist:
-            return Response({'error': 'Assignment not found.'}, status=status.HTTP_404_NOT_FOUND)
+            return error_response(
+                detail='Assignment not found.',
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
 
         alert = assignment.alert
         alert.status = new_status
@@ -127,11 +139,17 @@ class AlertLocationView(APIView):
                 'alert__location'
             ).get(assignment_id=assignment_id, agency=agency)
         except AlertAssignment.DoesNotExist:
-            return Response({'error': 'Assignment not found.'}, status=status.HTTP_404_NOT_FOUND)
+            return error_response(
+                detail='Assignment not found.',
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
 
         location = getattr(assignment.alert, 'location', None)
         if not location:
-            return Response({'error': 'No location data for this alert.'}, status=status.HTTP_404_NOT_FOUND)
+            return error_response(
+                detail='No location data for this alert.',
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
 
         maps_url = f"https://maps.google.com/?q={location.latitude},{location.longitude}"
 
@@ -159,7 +177,10 @@ class RegisterAgencyDeviceView(APIView):
     def post(self, request):
         push_token = request.data.get('push_token')
         if not push_token:
-            return Response({'error': 'push_token is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                detail='push_token is required.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
 
         agency = request.user.agency_profile.agency
         agency.fcm_token = push_token
