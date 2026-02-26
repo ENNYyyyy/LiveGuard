@@ -243,6 +243,42 @@ class CivilianUserListView(APIView):
         return Response(CivilianUserSerializer(users, many=True).data)
 
 
+class CivilianUserDetailView(APIView):
+    """
+    PATCH /api/admin/users/<user_id>/
+    Activate or deactivate a civilian (non-staff) user account.
+    Body: { "is_active": true | false }
+    Safety: staff and superuser accounts are never affected.
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def patch(self, request, user_id):
+        if 'is_active' not in request.data:
+            return Response(
+                {'error': '"is_active" (true or false) is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(pk=user_id, is_staff=False, is_superuser=False)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Civilian user not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        new_state = bool(request.data['is_active'])
+        user.is_active = new_state
+        user.save(update_fields=['is_active'])
+
+        action = 'activated' if new_state else 'deactivated'
+        return Response({
+            'message': f"User '{user.email}' has been {action}.",
+            'user_id': user.pk,
+            'is_active': user.is_active,
+        })
+
+
 # ─── Notification logs ────────────────────────────────────────────────────────
 
 class NotificationLogListView(APIView):

@@ -3,6 +3,32 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/axiosConfig';
 import { STORAGE_KEYS } from '../utils/constants';
 
+function parseAuthError(err, fallback) {
+  const data = err?.response?.data;
+  if (!data) return fallback;
+
+  if (typeof data === 'string') return data;
+  if (data.detail) return data.detail;
+  if (data.error) return data.error;
+
+  if (data.errors && typeof data.errors === 'object') {
+    const [field, messages] = Object.entries(data.errors)[0] || [];
+    if (field) {
+      if (Array.isArray(messages) && messages.length) return `${field}: ${messages[0]}`;
+      if (typeof messages === 'string') return `${field}: ${messages}`;
+    }
+  }
+
+  if (typeof data === 'object') {
+    const [field, messages] = Object.entries(data)[0] || [];
+    if (field) {
+      if (Array.isArray(messages) && messages.length) return `${field}: ${messages[0]}`;
+      if (typeof messages === 'string') return `${field}: ${messages}`;
+    }
+  }
+  return fallback;
+}
+
 // Backend returns { full_name, phone_number, ... }.
 // Screens also use firstName, lastName, phone so we derive them here.
 function normalizeUser(user) {
@@ -31,7 +57,7 @@ export const registerUser = createAsyncThunk(
       await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(data.user));
       return { ...data, user: normalizeUser(data.user) };
     } catch (err) {
-      return rejectWithValue(err.response?.data?.detail || 'Registration failed');
+      return rejectWithValue(parseAuthError(err, 'Registration failed'));
     }
   }
 );
@@ -46,7 +72,7 @@ export const loginUser = createAsyncThunk(
       await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(data.user));
       return { ...data, user: normalizeUser(data.user) };
     } catch (err) {
-      return rejectWithValue(err.response?.data?.detail || 'Login failed');
+      return rejectWithValue(parseAuthError(err, 'Login failed'));
     }
   }
 );
@@ -94,7 +120,7 @@ export const updateProfile = createAsyncThunk(
       await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(data));
       return normalizeUser(data);
     } catch (err) {
-      return rejectWithValue(err.response?.data?.detail || 'Profile update failed');
+      return rejectWithValue(parseAuthError(err, 'Profile update failed'));
     }
   }
 );
@@ -105,7 +131,7 @@ export const registerDevice = createAsyncThunk(
     try {
       await api.post('/api/auth/register-device/', { push_token });
     } catch (err) {
-      return rejectWithValue(err.response?.data?.detail || 'Device registration failed');
+      return rejectWithValue(parseAuthError(err, 'Device registration failed'));
     }
   }
 );

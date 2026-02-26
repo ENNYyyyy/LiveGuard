@@ -144,7 +144,7 @@ class CivilianUserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = User
-        fields = ['user_id', 'full_name', 'email', 'phone_number', 'date_joined', 'alert_count']
+        fields = ['user_id', 'full_name', 'email', 'phone_number', 'date_joined', 'alert_count', 'is_active']
 
     def get_alert_count(self, obj):
         return obj.alerts.count()

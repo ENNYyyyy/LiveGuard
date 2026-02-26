@@ -8,8 +8,26 @@ from .models import NotificationLog
 
 logger = logging.getLogger(__name__)
 
-# Maximum number of *retries* after the first attempt (total attempts = MAX_RETRIES + 1)
-MAX_RETRIES = 2
+# Hard-coded fallback used when the DB setting cannot be read.
+_DEFAULT_MAX_RETRIES = 2
+
+
+def _get_max_retries():
+    """
+    Read max_notification_retries from SystemSetting (DB).
+    Returns _DEFAULT_MAX_RETRIES on any error so notifications always fire.
+    """
+    try:
+        from admin_panel.models import SystemSetting
+        setting = SystemSetting.objects.get(key='max_notification_retries')
+        value = int(setting.value.strip())
+        return max(0, value)
+    except Exception as exc:
+        logger.warning(
+            f'_get_max_retries: could not read DB setting ({exc}); '
+            f'using default={_DEFAULT_MAX_RETRIES}.'
+        )
+        return _DEFAULT_MAX_RETRIES
 
 
 def dispatch_alert_assignments(alert_id):
@@ -326,12 +344,15 @@ class NotificationDispatcher:
 
     def _send_with_retry(self, send_fn, assignment, channel_type, recipient):
         """
-        Call send_fn() up to (MAX_RETRIES + 1) times.
+        Call send_fn() up to (_get_max_retries() + 1) times.
+        The retry ceiling is read from SystemSetting DB on each dispatch call;
+        falls back to _DEFAULT_MAX_RETRIES when the DB is unavailable.
         Persists one NotificationLog row per attempt with the correct retry_count.
         Returns True if any attempt succeeded; never raises an exception to the caller.
         One channel's failure does not affect sibling channels.
         """
-        for attempt in range(MAX_RETRIES + 1):
+        max_retries = _get_max_retries()
+        for attempt in range(max_retries + 1):
             try:
                 send_fn()
                 NotificationLog.objects.create(
@@ -354,14 +375,14 @@ class NotificationDispatcher:
                     error_message=str(e),
                     retry_count=attempt,
                 )
-                if attempt < MAX_RETRIES:
+                if attempt < max_retries:
                     logger.warning(
                         f"{channel_type} attempt {attempt + 1} failed for {recipient}, "
                         f"retrying: {e}"
                     )
                 else:
                     logger.error(
-                        f"{channel_type} all {MAX_RETRIES + 1} attempts failed "
+                        f"{channel_type} all {max_retries + 1} attempts failed "
                         f"for {recipient}: {e}"
                     )
         return False
