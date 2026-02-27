@@ -132,25 +132,113 @@ Retry ceiling is driven by `max_notification_retries` SystemSetting (default: 2,
 
 ---
 
-## 6. Usability Evaluation (Planned)
+## 6. Usability Evaluation
 
-Per Chapter 1 §Methodology:
-- Usability testing via user walkthrough with target users (civilians and agency dispatchers)
-- Metrics: task completion rate, error rate, SUS (System Usability Scale) score
-- Target: SUS score ≥ 70 (above average usability threshold)
+Per Chapter 1 §Methodology, usability is evaluated using a moderated walkthrough with
+representative users from each population segment, followed by the System Usability Scale (SUS)
+questionnaire (Brooke, 1996).
 
-> **TODO:** Conduct user study and record results here.
+**Target:** SUS score ≥ 70 (above-average usability threshold per Bangor et al., 2009).
+
+### 6.1 Target Participants
+
+| Role | Count | Rationale |
+|------|-------|-----------|
+| Civilian users (general public) | 5 | Nielsen's 85% rule — 5 users uncover most usability issues |
+| Agency dispatchers | 3 | Representative of emergency-response operators |
+| **Total** | **8** | Sufficient for qualitative task-flow analysis |
+
+### 6.2 Task Scenarios
+
+**Civilian app (LiveGuard):**
+
+| # | Task | Success Criterion |
+|---|------|-------------------|
+| 1 | Register an account and log in | Login completes without error |
+| 2 | Submit an emergency alert with location | Alert appears in "My Alerts" with status PENDING |
+| 3 | Track the live status of a submitted alert | User reads current status (DISPATCHED / RESPONDING / RESOLVED) |
+| 4 | Cancel an active alert | Alert status changes to CANCELLED |
+| 5 | Update location during an active alert | Location update accepted (200 OK) |
+
+**Agency dashboard (agency-web):**
+
+| # | Task | Success Criterion |
+|---|------|-------------------|
+| 1 | Log in as an agency dispatcher | Dashboard loads with incoming queue |
+| 2 | Locate and open a PENDING alert from the queue | Alert detail visible with reporter location |
+| 3 | Acknowledge an assigned alert | Status changes to RESPONDING in the console |
+| 4 | Mark an alert as resolved | Status changes to RESOLVED; card removed from queue |
+| 5 | Interpret the elapsed-time indicator on a queue card | Participant correctly states how long ago the alert was created |
+
+### 6.3 Metrics
+
+| Metric | Measurement method |
+|--------|--------------------|
+| Task completion rate | Binary per-task (completed without assistance) |
+| Error rate | Count of incorrect actions per task |
+| Time-on-task | Wall-clock seconds from task-start to task-end |
+| Satisfaction (SUS) | 10-item SUS questionnaire, 1–5 Likert scale |
+
+### 6.4 SUS Questionnaire Items (Standard — Brooke, 1996)
+
+1. I think that I would like to use this system frequently.
+2. I found the system unnecessarily complex.
+3. I thought the system was easy to use.
+4. I think that I would need the support of a technical person to be able to use this system.
+5. I found the various functions in this system were well integrated.
+6. I thought there was too much inconsistency in this system.
+7. I would imagine that most people would learn to use this system very quickly.
+8. I found the system very cumbersome to use.
+9. I felt very confident using the system.
+10. I needed to learn a lot of things before I could get going with this system.
+
+**Scoring:** Odd items contribute `(score − 1)`; even items contribute `(5 − score)`. Sum × 2.5 → 0–100 scale.
+
+### 6.5 Results
+
+> **Status: Pending user study.**
+> Study to be conducted with target participants before thesis submission.
+> Record observed results in the table below after each session.
+
+| Participant | Role | Completion Rate | Avg Errors | Time-on-Task (s) | SUS Score |
+|-------------|------|-----------------|------------|-------------------|-----------|
+| P1 | — | — | — | — | — |
+| P2 | — | — | — | — | — |
+| P3 | — | — | — | — | — |
+| P4 | — | — | — | — | — |
+| P5 | — | — | — | — | — |
+| P6 | — | — | — | — | — |
+| P7 | — | — | — | — | — |
+| P8 | — | — | — | — | — |
+| **Mean** | | — | — | — | **—** |
+
+**Target: Mean SUS ≥ 70 · Task completion ≥ 80%**
 
 ---
 
-## 7. Commands to Run Full Evaluation
+## 7. Performance Test Suite Location
+
+Automated performance tests are implemented in **`tests/test_performance.py`** and cover:
+
+| Class | What it measures |
+|-------|-----------------|
+| `ResponseTimeTest` | Sequential alert creation latency (n=50) |
+| `MultiChannelDeliveryTest` | Delivery success rate across PUSH/SMS/EMAIL channels (n=20) |
+| `ConcurrentLoadTest` | Simultaneous alert submission throughput and error rate (n=20 threads) |
+| `PerformanceSummary` | Aggregate pass/fail summary printed to test output |
+
+All classes are executed as part of the standard test run (command below). No separate tool or script is required.
+
+---
+
+## 8. Commands to Run Full Evaluation
 
 ```bash
 # 1. Django system check
 cd emergency-alert-backend
 .\venv\Scripts\python.exe manage.py check
 
-# 2. Unit + integration tests
+# 2. Unit + integration tests (includes tests/test_performance.py automatically)
 .\venv\Scripts\python.exe manage.py test --settings=alert_system.test_settings -v 2
 
 # 3. Deploy security check
@@ -183,3 +271,6 @@ else:
 
 *Last updated: 2026-02-26*
 *Prepared for thesis Chapter 4 (Evaluation and Results).*
+
+> **Note:** Results in sections 1–3 were obtained by running `tests/test_performance.py` under SQLite
+> in-memory with all external services mocked. They reflect server-side application performance only.

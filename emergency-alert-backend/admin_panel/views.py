@@ -5,7 +5,9 @@ from django.db.models import Count, Avg, Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
+
+from alert_system.permissions import IsAdminUser
 
 from agencies.models import SecurityAgency
 from alerts.models import EmergencyAlert, AlertAssignment
@@ -24,6 +26,35 @@ from .serializers import (
     NotificationLogSerializer,
     SystemSettingSerializer,
 )
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _parse_bool(value):
+    """
+    Parse a boolean value from JSON or form data robustly.
+
+    Accepts:
+      - Python/JSON bool: True / False
+      - Integers: 1 (True) or 0 (False)
+      - Strings (case-insensitive): 'true'/'false', '1'/'0', 'yes'/'no', 'on'/'off'
+
+    Returns (bool, None) on success; (None, error_message) on failure.
+    Used so PATCH { "is_active": "false" } is not silently misread as True.
+    """
+    if isinstance(value, bool):
+        return value, None
+    if isinstance(value, int):
+        if value in (0, 1):
+            return bool(value), None
+        return None, f'"is_active" integer must be 0 or 1, got {value!r}.'
+    if isinstance(value, str):
+        lower = value.strip().lower()
+        if lower in ('true', '1', 'yes', 'on'):
+            return True, None
+        if lower in ('false', '0', 'no', 'off'):
+            return False, None
+    return None, '"is_active" must be a boolean (true/false) or equivalent string (yes/no, on/off, 1/0).'
 
 
 # ─── Dashboard ────────────────────────────────────────────────────────────────
@@ -267,7 +298,9 @@ class CivilianUserDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        new_state = bool(request.data['is_active'])
+        new_state, parse_err = _parse_bool(request.data['is_active'])
+        if parse_err:
+            return Response({'error': parse_err}, status=status.HTTP_400_BAD_REQUEST)
         user.is_active = new_state
         user.save(update_fields=['is_active'])
 

@@ -290,3 +290,137 @@ class CivilianUserListTests(APITestCase):
         make_alert(user)
         resp = self.client.get(self.url, **auth(self.admin))
         self.assertEqual(resp.data[0]['alert_count'], 1)
+
+
+class CivilianUserDetailTests(APITestCase):
+    """Tests for PATCH /api/admin/users/<id>/ — activate/deactivate civilian accounts."""
+
+    def setUp(self):
+        self.admin    = make_admin()
+        self.civilian = make_user()
+        self.url      = reverse('admin-user-detail', args=[self.civilian.pk])
+
+    # ── Happy path ──────────────────────────────────────────────────────────
+
+    def test_patch_bool_false_deactivates(self):
+        """JSON boolean false must deactivate the user."""
+        resp = self.client.patch(
+            self.url, {'is_active': False}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.civilian.refresh_from_db()
+        self.assertFalse(self.civilian.is_active)
+
+    def test_patch_bool_true_activates(self):
+        """JSON boolean true must activate the user."""
+        self.civilian.is_active = False
+        self.civilian.save()
+        resp = self.client.patch(
+            self.url, {'is_active': True}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.civilian.refresh_from_db()
+        self.assertTrue(self.civilian.is_active)
+
+    def test_patch_string_false_deactivates(self):
+        """String 'false' must deactivate — not be silently coerced to True by bool()."""
+        resp = self.client.patch(
+            self.url, {'is_active': 'false'}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.civilian.refresh_from_db()
+        self.assertFalse(self.civilian.is_active)
+
+    def test_patch_string_true_activates(self):
+        """String 'true' must activate."""
+        self.civilian.is_active = False
+        self.civilian.save()
+        resp = self.client.patch(
+            self.url, {'is_active': 'true'}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.civilian.refresh_from_db()
+        self.assertTrue(self.civilian.is_active)
+
+    def test_patch_response_contains_new_state(self):
+        """Response body must reflect the updated is_active value."""
+        resp = self.client.patch(
+            self.url, {'is_active': False}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertFalse(resp.data['is_active'])
+        self.assertEqual(resp.data['user_id'], self.civilian.pk)
+
+    # ── Validation errors ───────────────────────────────────────────────────
+
+    def test_patch_invalid_string_returns_400(self):
+        """Arbitrary string must be rejected with 400."""
+        resp = self.client.patch(
+            self.url, {'is_active': 'banana'}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', resp.data)
+
+    def test_patch_missing_field_returns_400(self):
+        """Omitting is_active must return 400."""
+        resp = self.client.patch(
+            self.url, {}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_invalid_integer_returns_400(self):
+        """Integer other than 0 or 1 must be rejected."""
+        resp = self.client.patch(
+            self.url, {'is_active': 99}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ── Safety guards ───────────────────────────────────────────────────────
+
+    def test_staff_user_cannot_be_toggled(self):
+        """Staff users are not in the civilian set — must return 404."""
+        staff = make_admin('staff2@test.com')
+        url = reverse('admin-user-detail', args=[staff.pk])
+        resp = self.client.patch(
+            url, {'is_active': False}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_superuser_cannot_be_toggled(self):
+        """Superusers are not in the civilian set — must return 404."""
+        su = User.objects.create_superuser(
+            email='su@test.com', password='supass123',
+            phone_number='+2348099999999', full_name='Super User',
+        )
+        url = reverse('admin-user-detail', args=[su.pk])
+        resp = self.client.patch(
+            url, {'is_active': False}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patch_nonexistent_user_returns_404(self):
+        """Non-existent user_id must return 404."""
+        url = reverse('admin-user-detail', args=[99999])
+        resp = self.client.patch(
+            url, {'is_active': False}, content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patch_requires_admin(self):
+        """Non-admin must be rejected with 403."""
+        resp = self.client.patch(
+            self.url, {'is_active': False}, content_type='application/json',
+            **auth(self.civilian),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)

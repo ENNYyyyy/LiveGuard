@@ -186,12 +186,16 @@ EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL')
 
 # Security hardening
-# Defaults are safe for local development (all off).
-# Set these to production values via environment variables on the server.
+# SECURE_HSTS_SECONDS and SECURE_SSL_REDIRECT are intentionally env-only:
+#   HSTS is irreversible once browsers cache it; SSL_REDIRECT may be
+#   handled upstream by a load balancer. Operators must opt in explicitly.
+# SESSION_COOKIE_SECURE and CSRF_COOKIE_SECURE auto-enable in production
+#   (DEBUG=False) because there is no legitimate reason to transmit session
+#   or CSRF cookies over plain HTTP in production. Override via env if needed.
 SECURE_HSTS_SECONDS       = config('SECURE_HSTS_SECONDS',    cast=int,  default=0)
 SECURE_SSL_REDIRECT       = config('SECURE_SSL_REDIRECT',    cast=bool, default=False)
-SESSION_COOKIE_SECURE     = config('SESSION_COOKIE_SECURE',  cast=bool, default=False)
-CSRF_COOKIE_SECURE        = config('CSRF_COOKIE_SECURE',     cast=bool, default=False)
+SESSION_COOKIE_SECURE     = config('SESSION_COOKIE_SECURE',  cast=bool, default=not DEBUG)
+CSRF_COOKIE_SECURE        = config('CSRF_COOKIE_SECURE',     cast=bool, default=not DEBUG)
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 

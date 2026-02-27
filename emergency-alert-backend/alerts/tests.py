@@ -261,3 +261,75 @@ class UpdateAlertLocationTests(APITestCase):
     def test_missing_coordinates_returns_400(self):
         response = self.client.patch(self.url(), {}, **auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+# ─── Throttle fallback ────────────────────────────────────────────────────────
+
+class AlertCreationThrottleFallbackTests(APITestCase):
+    """
+    Unit tests for AlertCreationThrottle.get_rate().
+    Verify that the throttle is never silently disabled:
+      - When DB row is missing, falls back to settings.py value (a valid non-empty string).
+      - When DB row is present, the DB value is preferred.
+      - When DB value is invalid (non-integer), falls back gracefully.
+    """
+
+    def test_fallback_when_db_setting_missing(self):
+        """No DB row → super().get_rate() returns the settings.py rate (not None/empty)."""
+        from alerts.throttles import AlertCreationThrottle
+        from admin_panel.models import SystemSetting
+
+        SystemSetting.objects.filter(key='alert_creation_rate_limit').delete()
+        throttle = AlertCreationThrottle()
+        rate = throttle.get_rate()
+        # Must be a non-empty string in "N/period" format — throttle never disabled.
+        self.assertIsNotNone(rate)
+        self.assertIn('/', rate)
+        parts = rate.split('/')
+        self.assertTrue(int(parts[0]) > 0)
+
+    def test_db_rate_overrides_settings(self):
+        """When DB row exists, its value takes precedence over settings.py."""
+        from alerts.throttles import AlertCreationThrottle
+        from admin_panel.models import SystemSetting
+
+        SystemSetting.objects.update_or_create(
+            key='alert_creation_rate_limit',
+            defaults={'value': '42', 'description': 'test'},
+        )
+        throttle = AlertCreationThrottle()
+        rate = throttle.get_rate()
+        self.assertEqual(rate, '42/hour')
+
+    def test_invalid_db_value_falls_back(self):
+        """Non-integer DB value triggers warning log and falls back to settings."""
+        from alerts.throttles import AlertCreationThrottle
+        from admin_panel.models import SystemSetting
+        import logging
+
+        SystemSetting.objects.update_or_create(
+            key='alert_creation_rate_limit',
+            defaults={'value': 'not-a-number', 'description': 'test'},
+        )
+        throttle = AlertCreationThrottle()
+        with self.assertLogs('alerts.throttles', level=logging.WARNING):
+            rate = throttle.get_rate()
+        # Fallback must still be a valid rate string.
+        self.assertIsNotNone(rate)
+        self.assertIn('/', rate)
+
+    def test_zero_db_value_falls_back(self):
+        """Zero or negative DB value is rejected and falls back to settings."""
+        from alerts.throttles import AlertCreationThrottle
+        from admin_panel.models import SystemSetting
+        import logging
+
+        SystemSetting.objects.update_or_create(
+            key='alert_creation_rate_limit',
+            defaults={'value': '0', 'description': 'test'},
+        )
+        throttle = AlertCreationThrottle()
+        with self.assertLogs('alerts.throttles', level=logging.WARNING):
+            rate = throttle.get_rate()
+        self.assertIsNotNone(rate)
+        self.assertIn('/', rate)

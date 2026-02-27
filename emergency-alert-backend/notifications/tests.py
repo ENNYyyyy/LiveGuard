@@ -101,3 +101,73 @@ class NotificationLogOnDispatchTests(TestCase):
 
         assignment.refresh_from_db()
         self.assertEqual(assignment.notification_status, 'SENT')
+
+
+# ─── Retry setting fallback ───────────────────────────────────────────────────
+
+class RetrySettingFallbackTests(TestCase):
+    """
+    Unit tests for notifications.services._get_max_retries().
+    Verify the function never crashes and always returns a usable integer:
+      - When DB row is missing, returns _DEFAULT_MAX_RETRIES.
+      - When DB row is present, returns the stored integer.
+      - When DB value is invalid (non-integer), falls back to default.
+      - When DB value is negative, returns 0 (clipped by max(0, value)).
+    """
+
+    def test_fallback_when_db_setting_missing(self):
+        """No DB row → returns _DEFAULT_MAX_RETRIES (2)."""
+        from notifications.services import _get_max_retries, _DEFAULT_MAX_RETRIES
+        from admin_panel.models import SystemSetting
+
+        SystemSetting.objects.filter(key='max_notification_retries').delete()
+        result = _get_max_retries()
+        self.assertEqual(result, _DEFAULT_MAX_RETRIES)
+
+    def test_valid_db_setting_is_used(self):
+        """DB row with valid integer → that value is returned."""
+        from notifications.services import _get_max_retries
+        from admin_panel.models import SystemSetting
+
+        SystemSetting.objects.update_or_create(
+            key='max_notification_retries',
+            defaults={'value': '5', 'description': 'test'},
+        )
+        self.assertEqual(_get_max_retries(), 5)
+
+    def test_invalid_db_value_falls_back(self):
+        """Non-integer DB value → warning log + returns _DEFAULT_MAX_RETRIES."""
+        from notifications.services import _get_max_retries, _DEFAULT_MAX_RETRIES
+        from admin_panel.models import SystemSetting
+        import logging
+
+        SystemSetting.objects.update_or_create(
+            key='max_notification_retries',
+            defaults={'value': 'invalid', 'description': 'test'},
+        )
+        with self.assertLogs('notifications.services', level=logging.WARNING):
+            result = _get_max_retries()
+        self.assertEqual(result, _DEFAULT_MAX_RETRIES)
+
+    def test_negative_db_value_returns_zero(self):
+        """Negative integer is clipped to 0 by max(0, value) — no crash."""
+        from notifications.services import _get_max_retries
+        from admin_panel.models import SystemSetting
+
+        SystemSetting.objects.update_or_create(
+            key='max_notification_retries',
+            defaults={'value': '-3', 'description': 'test'},
+        )
+        result = _get_max_retries()
+        self.assertEqual(result, 0)
+
+    def test_zero_db_value_returns_zero(self):
+        """Zero retries is valid — means send once, no retries."""
+        from notifications.services import _get_max_retries
+        from admin_panel.models import SystemSetting
+
+        SystemSetting.objects.update_or_create(
+            key='max_notification_retries',
+            defaults={'value': '0', 'description': 'test'},
+        )
+        self.assertEqual(_get_max_retries(), 0)
