@@ -1,14 +1,15 @@
-import React, { useState } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, Switch, StyleSheet } from 'react-native';
 import { DrawerContentScrollView } from '@react-navigation/drawer';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { logoutUser } from '../store/authSlice';
-import colors from '../utils/colors';
+import { useTheme } from '../context/ThemeContext';
 
 const DrawerContent = (props) => {
   const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
-  const [darkMode, setDarkMode] = useState(false);
+  const { isDark, toggleTheme, colors } = useTheme();
 
   const handleLogout = async () => {
     await dispatch(logoutUser());
@@ -17,6 +18,8 @@ const DrawerContent = (props) => {
 
   const initials = [user?.firstName, user?.lastName]
     .filter(Boolean).map(n => n[0]).join('').toUpperCase() || 'U';
+
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   return (
     <DrawerContentScrollView {...props} contentContainerStyle={styles.container}>
@@ -34,25 +37,48 @@ const DrawerContent = (props) => {
           <Text style={styles.userName}>{user?.full_name || `${user?.first_name} ${user?.last_name}`}</Text>
           <Text style={styles.personalLabel}>Personal</Text>
         </View>
-        <Text style={styles.chevron}>›</Text>
+        <Ionicons name="chevron-forward" size={20} color={colors.TEXT_MEDIUM} />
       </TouchableOpacity>
 
       <View style={styles.divider} />
 
       {/* Menu items */}
-      <MenuItem icon="👤" label="My profile"    onPress={() => props.navigation.navigate('MainTabs', { screen: 'ProfileTab' })} />
-      <MenuItem icon="🔔" label="Notification"  onPress={() => {}} />
-      <MenuItem icon="👥" label="Invite friends" onPress={() => {}} />
+      <MenuItem
+        icon={<Ionicons name="person-outline" size={22} color={colors.TEXT_MEDIUM} />}
+        label="My profile"
+        onPress={() => props.navigation.navigate('MainTabs', { screen: 'ProfileTab' })}
+        colors={colors}
+      />
+      <MenuItem
+        icon={<MaterialCommunityIcons name="alarm-light-outline" size={22} color={colors.TEXT_MEDIUM} />}
+        label="Emergency Contacts"
+        onPress={() => props.navigation.navigate('EmergencyContactsScreen')}
+        colors={colors}
+      />
+      <MenuItem
+        icon={<Ionicons name="notifications-outline" size={22} color={colors.TEXT_MEDIUM} />}
+        label="Notification"
+        onPress={() => {}}
+        colors={colors}
+      />
+      <MenuItem
+        icon={<Ionicons name="people-outline" size={22} color={colors.TEXT_MEDIUM} />}
+        label="Invite friends"
+        onPress={() => {}}
+        colors={colors}
+      />
 
       {/* Dark mode toggle */}
-      <View style={styles.menuItem}>
-        <Text style={styles.menuIcon}>🌙</Text>
+      <View style={styles.darkModeRow}>
+        <View style={styles.menuIconBox}>
+          <Ionicons name="moon-outline" size={22} color={colors.TEXT_MEDIUM} />
+        </View>
         <Text style={styles.menuLabel}>Dark mode</Text>
         <Switch
-          value={darkMode}
-          onValueChange={setDarkMode}
+          value={isDark}
+          onValueChange={toggleTheme}
           thumbColor={colors.BACKGROUND_WHITE}
-          trackColor={{ false: colors.BORDER_GREY, true: colors.SUCCESS_GREEN }}
+          trackColor={{ false: colors.BORDER_GREY, true: colors.PRIMARY_BLUE }}
           style={styles.toggle}
         />
       </View>
@@ -60,21 +86,35 @@ const DrawerContent = (props) => {
       <View style={styles.spacer} />
       <View style={styles.divider} />
 
-      <MenuItem icon="❓" label="Settings & support" onPress={() => props.navigation.navigate('SettingsScreen')} />
-      <MenuItem icon="🚪" label="Log Out" onPress={handleLogout} danger />
+      <MenuItem
+        icon={<Ionicons name="help-circle-outline" size={22} color={colors.TEXT_MEDIUM} />}
+        label="Settings & support"
+        onPress={() => props.navigation.navigate('SettingsScreen')}
+        colors={colors}
+      />
+      <MenuItem
+        icon={<Ionicons name="log-out-outline" size={22} color={colors.ACCENT_RED} />}
+        label="Log Out"
+        onPress={handleLogout}
+        danger
+        colors={colors}
+      />
 
     </DrawerContentScrollView>
   );
 };
 
-const MenuItem = ({ icon, label, onPress, danger }) => (
-  <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.7}>
-    <Text style={styles.menuIcon}>{icon}</Text>
-    <Text style={[styles.menuLabel, danger && styles.menuLabelDanger]}>{label}</Text>
-  </TouchableOpacity>
-);
+const MenuItem = ({ icon, label, onPress, danger, colors }) => {
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  return (
+    <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.7}>
+      <View style={styles.menuIconBox}>{icon}</View>
+      <Text style={[styles.menuLabel, danger && styles.menuLabelDanger]}>{label}</Text>
+    </TouchableOpacity>
+  );
+};
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.BACKGROUND_LIGHT,
@@ -95,7 +135,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarText: {
-    color: colors.BACKGROUND_WHITE,
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '700',
   },
@@ -105,16 +145,12 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.PRIMARY_NAVY,
+    color: colors.TEXT_DARK,
   },
   personalLabel: {
     fontSize: 13,
     color: colors.TEXT_MEDIUM,
     marginTop: 2,
-  },
-  chevron: {
-    fontSize: 22,
-    color: colors.TEXT_MEDIUM,
   },
   divider: {
     height: 1,
@@ -129,10 +165,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     gap: 14,
   },
-  menuIcon: {
-    fontSize: 20,
+  darkModeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 56,
+    paddingHorizontal: 20,
+    gap: 14,
+  },
+  toggle: {
+    alignSelf: 'center',
+    flexShrink: 0,
+  },
+  menuIconBox: {
     width: 28,
-    textAlign: 'center',
+    alignItems: 'center',
   },
   menuLabel: {
     flex: 1,
@@ -142,9 +188,6 @@ const styles = StyleSheet.create({
   },
   menuLabelDanger: {
     color: colors.ACCENT_RED,
-  },
-  toggle: {
-    marginLeft: 'auto',
   },
   spacer: {
     flex: 1,

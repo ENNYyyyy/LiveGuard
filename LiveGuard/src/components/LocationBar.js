@@ -1,8 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
-import colors from '../utils/colors';
+import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../context/ThemeContext';
 
 const LocationBar = ({ avatarUri, address, onPress }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.75}>
       {/* Avatar with online dot */}
@@ -26,16 +30,16 @@ const LocationBar = ({ avatarUri, address, onPress }) => {
       </View>
 
       {/* Chevron */}
-      <Text style={styles.chevron}>›</Text>
+      <Ionicons name="chevron-forward" size={20} color={colors.PLACEHOLDER_GREY} />
     </TouchableOpacity>
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.BACKGROUND_WHITE,
+    backgroundColor: colors.CARD_WHITE,
     borderRadius: 14,
     padding: 12,
     gap: 12,
@@ -61,7 +65,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarInitial: {
-    color: colors.BACKGROUND_WHITE,
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -74,7 +78,7 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: colors.SUCCESS_GREEN,
     borderWidth: 1.5,
-    borderColor: colors.BACKGROUND_WHITE,
+    borderColor: colors.CARD_WHITE,
   },
   info: {
     flex: 1,
@@ -88,10 +92,6 @@ const styles = StyleSheet.create({
   address: {
     fontSize: 13,
     color: colors.TEXT_MEDIUM,
-  },
-  chevron: {
-    fontSize: 22,
-    color: colors.PLACEHOLDER_GREY,
   },
 });
 

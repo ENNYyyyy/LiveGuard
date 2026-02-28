@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Modal,
   View,
@@ -6,7 +6,8 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
-import colors from '../utils/colors';
+import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../context/ThemeContext';
 
 /**
  * Modal prompting the user to grant location permission.
@@ -16,6 +17,9 @@ import colors from '../utils/colors';
  *   onDismiss      (function) — called when "Not Now" is pressed
  */
 const LocationPermissionModal = ({ visible, onOpenSettings, onDismiss }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <Modal
       transparent
@@ -25,7 +29,7 @@ const LocationPermissionModal = ({ visible, onOpenSettings, onDismiss }) => {
     >
       <View style={styles.overlay}>
         <View style={styles.card}>
-          <Text style={styles.icon}>📍</Text>
+          <Ionicons name="location" size={48} color={colors.PRIMARY_BLUE} />
 
           <Text style={styles.title}>Location Access Required</Text>
 
@@ -47,7 +51,7 @@ const LocationPermissionModal = ({ visible, onOpenSettings, onDismiss }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -56,7 +60,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   card: {
-    backgroundColor: colors.BACKGROUND_WHITE,
+    backgroundColor: colors.CARD_WHITE,
     borderRadius: 20,
     padding: 28,
     alignItems: 'center',
@@ -67,10 +71,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 12,
     elevation: 8,
-  },
-  icon: {
-    fontSize: 48,
-    marginBottom: 4,
   },
   title: {
     fontSize: 18,
@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   primaryBtnText: {
-    color: colors.BACKGROUND_WHITE,
+    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
   },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,35 +8,87 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { logoutUser, updateProfile } from '../../store/authSlice';
 import NoInternetBanner from '../../components/NoInternetBanner';
 import useNetInfo from '../../hooks/useNetInfo';
-import colors from '../../utils/colors';
+import { useTheme } from '../../context/ThemeContext';
 
-const MenuItem = ({ icon, label, value, onPress, danger }) => (
-  <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.75}>
-    <Text style={styles.menuIcon}>{icon}</Text>
-    <View style={styles.menuContent}>
-      <Text style={[styles.menuLabel, danger && { color: colors.SOS_RED }]}>{label}</Text>
-      {value && <Text style={styles.menuValue}>{value}</Text>}
-    </View>
-    {!danger && <Text style={styles.chevron}>›</Text>}
-  </TouchableOpacity>
-);
+// ── Inline toast ───────────────────────────────────────────────────────────────
+const Toast = ({ toast }) => {
+  const opacity = useRef(new Animated.Value(0)).current;
 
+  useEffect(() => {
+    if (!toast) return;
+    Animated.sequence([
+      Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.delay(1800),
+      Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, [toast]);
+
+  if (!toast) return null;
+  const isSuccess = toast.type !== 'error';
+  return (
+    <Animated.View
+      style={[
+        profileToastStyles.container,
+        { backgroundColor: isSuccess ? '#16A34A' : '#DC2626', opacity },
+      ]}
+    >
+      <Ionicons name={isSuccess ? 'checkmark-circle' : 'alert-circle'} size={16} color="#FFFFFF" />
+      <Text style={profileToastStyles.text}>{toast.message}</Text>
+    </Animated.View>
+  );
+};
+
+const profileToastStyles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    bottom: 32,
+    left: 24,
+    right: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    zIndex: 999,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  text: { color: '#FFFFFF', fontSize: 14, fontWeight: '600', flex: 1 },
+});
+
+// ── Screen ─────────────────────────────────────────────────────────────────────
 const ProfileScreen = () => {
   const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
   const loading = useSelector((state) => state.auth.loading);
   const { isConnected } = useNetInfo();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const toastTimer = useRef(null);
 
   const [editing, setEditing] = useState(false);
   const [firstName, setFirstName] = useState(user?.firstName || '');
   const [lastName, setLastName] = useState(user?.lastName || '');
   const [phone, setPhone] = useState(user?.phone || '');
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 2700);
+  };
 
   const initials = `${user?.firstName?.charAt(0) || ''}${user?.lastName?.charAt(0) || ''}`.trim();
 
@@ -51,7 +103,7 @@ const ProfileScreen = () => {
 
   const handleSave = async () => {
     if (!firstName.trim()) {
-      Alert.alert('Validation', 'First name cannot be empty.');
+      showToast('First name cannot be empty.', 'error');
       return;
     }
     const result = await dispatch(
@@ -59,8 +111,9 @@ const ProfileScreen = () => {
     );
     if (updateProfile.fulfilled.match(result)) {
       setEditing(false);
+      showToast('Profile updated successfully.');
     } else {
-      Alert.alert('Update Failed', result.payload || 'Could not save changes.');
+      showToast(result.payload || 'Could not save changes.', 'error');
     }
   };
 
@@ -74,6 +127,34 @@ const ProfileScreen = () => {
       },
     ]);
   };
+
+  const MenuItem = ({ icon, label, value, onPress, danger }) => (
+    <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.75}>
+      <View style={styles.menuIconBox}>{icon}</View>
+      <View style={styles.menuContent}>
+        <Text style={[styles.menuLabel, danger && { color: colors.SOS_RED }]}>{label}</Text>
+        {value && <Text style={styles.menuValue}>{value}</Text>}
+      </View>
+      {!danger && <Ionicons name="chevron-forward" size={18} color={colors.PLACEHOLDER_GREY} />}
+    </TouchableOpacity>
+  );
+
+  const EditField = ({ icon, label, value, onChangeText, keyboardType }) => (
+    <View style={styles.editField}>
+      <View style={styles.menuIconBox}>{icon}</View>
+      <View style={styles.editFieldContent}>
+        <Text style={styles.editFieldLabel}>{label}</Text>
+        <TextInput
+          style={styles.editInput}
+          value={value}
+          onChangeText={onChangeText}
+          keyboardType={keyboardType || 'default'}
+          autoCapitalize="words"
+          placeholderTextColor={colors.PLACEHOLDER_GREY}
+        />
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -91,7 +172,7 @@ const ProfileScreen = () => {
             </View>
           ) : (
             <View style={[styles.avatar, styles.avatarFallback]}>
-              <Text style={styles.avatarPersonIcon}>👤</Text>
+              <Ionicons name="person-outline" size={36} color={colors.PLACEHOLDER_GREY} />
             </View>
           )}
           <Text style={styles.name}>
@@ -106,7 +187,7 @@ const ProfileScreen = () => {
             disabled={loading}
           >
             {loading && editing ? (
-              <ActivityIndicator size="small" color={colors.BACKGROUND_WHITE} />
+              <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
               <Text style={styles.editBtnText}>{editing ? 'Save Changes' : 'Edit Profile'}</Text>
             )}
@@ -125,15 +206,46 @@ const ProfileScreen = () => {
 
           {editing ? (
             <>
-              <EditField icon="👤" label="First Name" value={firstName} onChangeText={setFirstName} />
-              <EditField icon="👤" label="Last Name" value={lastName} onChangeText={setLastName} />
-              <EditField icon="📱" label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+              <EditField
+                icon={<Ionicons name="person-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="First Name"
+                value={firstName}
+                onChangeText={setFirstName}
+              />
+              <EditField
+                icon={<Ionicons name="person-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Last Name"
+                value={lastName}
+                onChangeText={setLastName}
+              />
+              <EditField
+                icon={<Ionicons name="phone-portrait-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Phone"
+                value={phone}
+                onChangeText={setPhone}
+                keyboardType="phone-pad"
+              />
             </>
           ) : (
             <>
-              <MenuItem icon="👤" label="Full Name" value={`${user?.firstName} ${user?.lastName}`} onPress={handleEditToggle} />
-              <MenuItem icon="📧" label="Email" value={user?.email} onPress={() => {}} />
-              <MenuItem icon="📱" label="Phone" value={user?.phone} onPress={handleEditToggle} />
+              <MenuItem
+                icon={<Ionicons name="person-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Full Name"
+                value={`${user?.firstName} ${user?.lastName}`}
+                onPress={handleEditToggle}
+              />
+              <MenuItem
+                icon={<Ionicons name="mail-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Email"
+                value={user?.email}
+                onPress={() => {}}
+              />
+              <MenuItem
+                icon={<Ionicons name="phone-portrait-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Phone"
+                value={user?.phone}
+                onPress={handleEditToggle}
+              />
             </>
           )}
         </View>
@@ -141,47 +253,67 @@ const ProfileScreen = () => {
         {/* Preferences */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Preferences</Text>
-          <MenuItem icon="🔔" label="Notifications" onPress={() => {}} />
-          <MenuItem icon="📍" label="Location Settings" onPress={() => {}} />
-          <MenuItem icon="🌙" label="Appearance" onPress={() => {}} />
+          <MenuItem
+            icon={<Ionicons name="notifications-outline" size={20} color={colors.TEXT_MEDIUM} />}
+            label="Notifications"
+            onPress={() => {}}
+          />
+          <MenuItem
+            icon={<Ionicons name="location-outline" size={20} color={colors.TEXT_MEDIUM} />}
+            label="Location Settings"
+            onPress={() => {}}
+          />
+          <MenuItem
+            icon={<Ionicons name="moon-outline" size={20} color={colors.TEXT_MEDIUM} />}
+            label="Appearance"
+            onPress={() => {}}
+          />
         </View>
 
         {/* Support */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Support</Text>
-          <MenuItem icon="❓" label="Help & FAQ" onPress={() => {}} />
-          <MenuItem icon="📄" label="Privacy Policy" onPress={() => {}} />
-          <MenuItem icon="📜" label="Terms of Service" onPress={() => {}} />
-          <MenuItem icon="ℹ️" label="App Version" value="1.0.0" onPress={() => {}} />
+          <MenuItem
+            icon={<Ionicons name="help-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
+            label="Help & FAQ"
+            onPress={() => {}}
+          />
+          <MenuItem
+            icon={<Ionicons name="document-text-outline" size={20} color={colors.TEXT_MEDIUM} />}
+            label="Privacy Policy"
+            onPress={() => {}}
+          />
+          <MenuItem
+            icon={<Ionicons name="reader-outline" size={20} color={colors.TEXT_MEDIUM} />}
+            label="Terms of Service"
+            onPress={() => {}}
+          />
+          <MenuItem
+            icon={<Ionicons name="information-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
+            label="App Version"
+            value="1.0.0"
+            onPress={() => {}}
+          />
         </View>
 
         {/* Logout */}
         <View style={styles.section}>
-          <MenuItem icon="🚪" label="Log Out" onPress={handleLogout} danger />
+          <MenuItem
+            icon={<Ionicons name="log-out-outline" size={20} color={colors.SOS_RED} />}
+            label="Log Out"
+            onPress={handleLogout}
+            danger
+          />
         </View>
       </ScrollView>
+
+      {/* Toast */}
+      <Toast toast={toast} />
     </SafeAreaView>
   );
 };
 
-const EditField = ({ icon, label, value, onChangeText, keyboardType }) => (
-  <View style={styles.editField}>
-    <Text style={styles.menuIcon}>{icon}</Text>
-    <View style={styles.editFieldContent}>
-      <Text style={styles.editFieldLabel}>{label}</Text>
-      <TextInput
-        style={styles.editInput}
-        value={value}
-        onChangeText={onChangeText}
-        keyboardType={keyboardType || 'default'}
-        autoCapitalize="words"
-        placeholderTextColor={colors.PLACEHOLDER_GREY}
-      />
-    </View>
-  </View>
-);
-
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.BACKGROUND_LIGHT },
   scrollOffsetForBanner: {
     marginTop: 44,
@@ -204,15 +336,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   avatarFallback: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.BORDER_GREY,
   },
   avatarText: {
     fontSize: 30,
     fontWeight: '700',
-    color: colors.BACKGROUND_WHITE,
-  },
-  avatarPersonIcon: {
-    fontSize: 36,
+    color: '#FFFFFF',
   },
   name: {
     fontSize: 20,
@@ -233,7 +362,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   editBtnText: {
-    color: colors.BACKGROUND_WHITE,
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
   },
@@ -270,10 +399,9 @@ const styles = StyleSheet.create({
     borderTopColor: colors.BORDER_GREY,
     gap: 14,
   },
-  menuIcon: {
-    fontSize: 20,
+  menuIconBox: {
     width: 28,
-    textAlign: 'center',
+    alignItems: 'center',
   },
   menuContent: {
     flex: 1,
@@ -286,10 +414,6 @@ const styles = StyleSheet.create({
   },
   menuValue: {
     fontSize: 12,
-    color: colors.PLACEHOLDER_GREY,
-  },
-  chevron: {
-    fontSize: 20,
     color: colors.PLACEHOLDER_GREY,
   },
   editField: {

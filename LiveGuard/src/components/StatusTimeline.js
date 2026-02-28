@@ -1,22 +1,24 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import colors from '../utils/colors';
+import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../context/ThemeContext';
 
 const StatusTimeline = ({ steps = [] }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <View style={styles.container}>
       {steps.map((step, index) => {
         const isLast = index === steps.length - 1;
         return (
           <View key={index} style={styles.row}>
-            {/* Left column: circle + connecting line */}
             <View style={styles.left}>
               <View style={[styles.circle, step.completed && styles.circleCompleted]}>
-                {step.completed && <Text style={styles.check}>✓</Text>}
+                {step.completed && <Ionicons name="checkmark" size={11} color="#FFFFFF" />}
               </View>
               {!isLast && <View style={[styles.line, step.completed && styles.lineCompleted]} />}
             </View>
-            {/* Right column: label + time */}
             <View style={styles.content}>
               <Text style={styles.label}>{step.label}</Text>
               {step.time && <Text style={styles.time}>{step.time}</Text>}
@@ -28,7 +30,7 @@ const StatusTimeline = ({ steps = [] }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   container: {
     paddingVertical: 4,
   },
@@ -54,11 +56,6 @@ const styles = StyleSheet.create({
   circleCompleted: {
     backgroundColor: colors.PRIMARY_BLUE,
     borderColor: colors.PRIMARY_BLUE,
-  },
-  check: {
-    color: colors.BACKGROUND_WHITE,
-    fontSize: 11,
-    fontWeight: '700',
   },
   line: {
     width: 2,

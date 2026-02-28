@@ -1,40 +1,50 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import colors from '../utils/colors';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useTheme } from '../context/ThemeContext';
 
 const ALERT_TYPE_OPTIONS = [
-  { value: 'TERRORISM',     icon: '💣', label: 'Terrorism' },
-  { value: 'BANDITRY',      icon: '🔫', label: 'Banditry' },
-  { value: 'KIDNAPPING',    icon: '🚨', label: 'Kidnapping' },
-  { value: 'ARMED_ROBBERY', icon: '🗡️', label: 'Armed Robbery' },
-  { value: 'ROBBERY',       icon: '💰', label: 'Robbery' },
-  { value: 'FIRE_INCIDENCE',icon: '🔥', label: 'Fire' },
-  { value: 'ACCIDENT',      icon: '🚗', label: 'Accident' },
-  { value: 'OTHER',         icon: '⚠️', label: 'Other' },
+  { value: 'TERRORISM',     icon: 'bomb',          label: 'Terrorism',    color: '#7C3AED' },
+  { value: 'BANDITRY',      icon: 'pistol',        label: 'Banditry',     color: '#DC2626' },
+  { value: 'KIDNAPPING',    icon: 'account-alert', label: 'Kidnapping',   color: '#92400E' },
+  { value: 'ARMED_ROBBERY', icon: 'knife',         label: 'Armed Robbery',color: '#DC2626' },
+  { value: 'ROBBERY',       icon: 'cash',          label: 'Robbery',      color: '#D97706' },
+  { value: 'FIRE_INCIDENCE',icon: 'fire',          label: 'Fire',         color: '#EF4444' },
+  { value: 'ACCIDENT',      icon: 'car-off',       label: 'Accident',     color: '#F59E0B' },
+  { value: 'OTHER',         icon: 'alert-circle',  label: 'Other',        color: '#6B7280' },
 ];
 
-const AlertTypeSelector = ({ value, onChange }) => (
-  <View style={styles.grid}>
-    {ALERT_TYPE_OPTIONS.map((opt) => {
-      const selected = value === opt.value;
-      return (
-        <TouchableOpacity
-          key={opt.value}
-          style={[styles.tile, selected && styles.tileSelected]}
-          onPress={() => onChange(opt.value)}
-          activeOpacity={0.75}
-        >
-          <Text style={styles.icon}>{opt.icon}</Text>
-          <Text style={[styles.label, selected && styles.labelSelected]}>
-            {opt.label}
-          </Text>
-        </TouchableOpacity>
-      );
-    })}
-  </View>
-);
+const AlertTypeSelector = ({ value, onChange }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
-const styles = StyleSheet.create({
+  return (
+    <View style={styles.grid}>
+      {ALERT_TYPE_OPTIONS.map((opt) => {
+        const selected = value === opt.value;
+        return (
+          <TouchableOpacity
+            key={opt.value}
+            style={[styles.tile, selected && styles.tileSelected]}
+            onPress={() => onChange(opt.value)}
+            activeOpacity={0.75}
+          >
+            <MaterialCommunityIcons
+              name={opt.icon}
+              size={28}
+              color={selected ? opt.color : colors.TEXT_MEDIUM}
+            />
+            <Text style={[styles.label, selected && { color: opt.color }]}>
+              {opt.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+};
+
+const makeStyles = (colors) => StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -49,23 +59,17 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 12,
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   tileSelected: {
     borderColor: colors.PRIMARY_BLUE,
-    backgroundColor: '#EFF6FF',
-  },
-  icon: {
-    fontSize: 26,
+    backgroundColor: colors.CHIP_ACTIVE_BG,
   },
   label: {
     fontSize: 13,
     fontWeight: '600',
     color: colors.TEXT_MEDIUM,
     textAlign: 'center',
-  },
-  labelSelected: {
-    color: colors.PRIMARY_BLUE,
   },
 });
 

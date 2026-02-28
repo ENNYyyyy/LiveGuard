@@ -1,14 +1,21 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import colors from '../utils/colors';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useTheme } from '../context/ThemeContext';
 
 const LogoHeader = ({ size = 'small' }) => {
   const isLarge = size === 'large';
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   return (
     <View style={styles.container}>
       <View style={styles.row}>
-        <Text style={isLarge ? styles.iconLarge : styles.iconSmall}>🚨</Text>
+        <MaterialCommunityIcons
+          name="shield-alert"
+          size={isLarge ? 36 : 24}
+          color={colors.PRIMARY_NAVY}
+        />
         <Text style={isLarge ? styles.titleLarge : styles.titleSmall}>LiveGuard</Text>
       </View>
       {isLarge && (
@@ -18,7 +25,7 @@ const LogoHeader = ({ size = 'small' }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   container: {
     alignItems: 'center',
   },
@@ -26,12 +33,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  iconSmall: {
-    fontSize: 24,
-  },
-  iconLarge: {
-    fontSize: 36,
   },
   titleSmall: {
     fontSize: 20,

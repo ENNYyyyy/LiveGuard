@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,10 @@ import {
   ScrollView,
   Linking,
   Alert,
+  Animated,
 } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -16,15 +18,15 @@ import { useDispatch, useSelector } from 'react-redux';
 import { cancelAlert, fetchAlertStatus, updateAlertLocation } from '../../store/alertSlice';
 import StatusTimeline from '../../components/StatusTimeline';
 import StatusBadge from '../../components/StatusBadge';
-import OutlinedButton from '../../components/OutlinedButton';
 import NoInternetBanner from '../../components/NoInternetBanner';
 import useNetInfo from '../../hooks/useNetInfo';
-import colors from '../../utils/colors';
+import { useTheme } from '../../context/ThemeContext';
 import typography from '../../utils/typography';
 import { formatTime } from '../../utils/helpers';
 
-const STATUS_ORDER = ['PENDING', 'DISPATCHED', 'ACKNOWLEDGED', 'RESPONDING', 'RESOLVED'];
-const STEP_LABELS  = ['Alert Sent', 'Dispatched', 'Acknowledged', 'En Route', 'Resolved'];
+const STATUS_ORDER  = ['PENDING', 'DISPATCHED', 'ACKNOWLEDGED', 'RESPONDING', 'RESOLVED'];
+const STEP_LABELS   = ['Alert Sent', 'Dispatched', 'Acknowledged', 'En Route', 'Resolved'];
+const CANCEL_WINDOW = 60; // seconds
 
 function buildSteps(status, createdAt) {
   const currentIndex = STATUS_ORDER.indexOf(status);
@@ -35,14 +37,87 @@ function buildSteps(status, createdAt) {
   }));
 }
 
-const TERMINAL_STATUSES = ['RESOLVED', 'CANCELLED'];
+const TERMINAL_STATUSES    = ['RESOLVED', 'CANCELLED'];
+const CANCELLABLE_STATUSES = ['PENDING', 'DISPATCHED'];
 
+// ── Simple inline toast ────────────────────────────────────────────────────────
+const Toast = ({ toast, colors }) => {
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!toast) return;
+    Animated.sequence([
+      Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.delay(2000),
+      Animated.timing(opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
+  }, [toast]);
+
+  if (!toast) return null;
+  const isSuccess = toast.type === 'success';
+  return (
+    <Animated.View
+      style={[
+        toastStyles.container,
+        { backgroundColor: isSuccess ? '#16A34A' : '#DC2626', opacity },
+      ]}
+    >
+      <Ionicons
+        name={isSuccess ? 'checkmark-circle' : 'alert-circle'}
+        size={16}
+        color="#FFFFFF"
+      />
+      <Text style={toastStyles.text}>{toast.message}</Text>
+    </Animated.View>
+  );
+};
+
+const toastStyles = StyleSheet.create({
+  container: {
+    position: 'absolute',
+    bottom: 32,
+    left: 24,
+    right: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    zIndex: 999,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  text: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+  },
+});
+
+// ── Screen ─────────────────────────────────────────────────────────────────────
 const AlertStatusScreen = ({ navigation, route }) => {
   const dispatch = useDispatch();
   const { currentAlert, loading, statusError } = useSelector((state) => state.alert);
   const { isConnected } = useNetInfo();
   const isFocused = useIsFocused();
   const locationSubscription = useRef(null);
+  const toastTimer = useRef(null);
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  const [cancelSecondsLeft, setCancelSecondsLeft] = useState(CANCEL_WINDOW);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 2700);
+  };
 
   const goHome = () => {
     navigation.navigate('MainDrawer', {
@@ -54,11 +129,13 @@ const AlertStatusScreen = ({ navigation, route }) => {
   const alertId =
     route?.params?.alert_id ?? route?.params?.alertId ?? currentAlert?.alert_id;
   const isTerminal = TERMINAL_STATUSES.includes(currentAlert?.status);
+  const isCancellable = CANCELLABLE_STATUSES.includes(currentAlert?.status);
 
   const doFetch = () => {
     if (alertId) dispatch(fetchAlertStatus(alertId));
   };
 
+  // ── Poll alert status ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isFocused || !alertId) return;
     doFetch();
@@ -67,7 +144,24 @@ const AlertStatusScreen = ({ navigation, route }) => {
     return () => clearInterval(interval);
   }, [isFocused, isTerminal, alertId]);
 
-  // Stream live location to the server while alert is active
+  // ── 60-second cancel countdown ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentAlert?.created_at || isTerminal) return;
+
+    const tick = () => {
+      const elapsed = Math.floor(
+        (Date.now() - new Date(currentAlert.created_at).getTime()) / 1000
+      );
+      const left = Math.max(0, CANCEL_WINDOW - elapsed);
+      setCancelSecondsLeft(left);
+    };
+
+    tick(); // run immediately
+    const countdown = setInterval(tick, 1000);
+    return () => clearInterval(countdown);
+  }, [currentAlert?.created_at, isTerminal]);
+
+  // ── Live location streaming ──────────────────────────────────────────────────
   useEffect(() => {
     if (!isFocused || isTerminal || !alertId) return;
 
@@ -76,11 +170,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
       if (permStatus !== 'granted') return;
 
       locationSubscription.current = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          distanceInterval: 15,  // send update every 15 metres of movement
-          timeInterval: 10000,   // no more than once every 10 seconds
-        },
+        { accuracy: Location.Accuracy.High, distanceInterval: 15, timeInterval: 10000 },
         (loc) => {
           dispatch(updateAlertLocation({
             alertId,
@@ -98,8 +188,8 @@ const AlertStatusScreen = ({ navigation, route }) => {
     };
   }, [isFocused, isTerminal, alertId]);
 
-  // Use first assignment for ETA display; render all assignments below
   const firstAck = currentAlert?.assignments?.[0]?.acknowledgment;
+  const canCancel = isCancellable && cancelSecondsLeft > 0;
 
   const handleCancel = () => {
     Alert.alert('Cancel Alert', 'Are you sure you want to cancel this alert?', [
@@ -108,8 +198,13 @@ const AlertStatusScreen = ({ navigation, route }) => {
         text: 'Yes, Cancel',
         style: 'destructive',
         onPress: async () => {
-          await dispatch(cancelAlert(currentAlert?.alert_id));
-          goHome();
+          const result = await dispatch(cancelAlert(currentAlert?.alert_id));
+          if (cancelAlert.fulfilled.match(result)) {
+            showToast('Alert cancelled.', 'success');
+            setTimeout(goHome, 1200);
+          } else {
+            showToast('Failed to cancel. Try again.', 'error');
+          }
         },
       },
     ]);
@@ -120,6 +215,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
       <SafeAreaView style={styles.safe}>
         <NoInternetBanner visible={!isConnected} />
         <View style={styles.emptyContainer}>
+          <Ionicons name="document-text-outline" size={56} color={colors.BORDER_GREY} />
           <Text style={styles.emptyText}>No active alert</Text>
           <TouchableOpacity onPress={goHome}>
             <Text style={styles.goHome}>Go Home</Text>
@@ -130,15 +226,13 @@ const AlertStatusScreen = ({ navigation, route }) => {
   }
 
   const userCoord = {
-    latitude: currentAlert.location?.latitude || 6.5244,
+    latitude:  currentAlert.location?.latitude  || 6.5244,
     longitude: currentAlert.location?.longitude || 3.3792,
   };
-
   const responderCoord = currentAlert.responder?.currentLocation;
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Offline banner */}
       <NoInternetBanner visible={!isConnected} />
 
       {/* Header */}
@@ -147,13 +241,16 @@ const AlertStatusScreen = ({ navigation, route }) => {
         <StatusBadge status={currentAlert.status} />
       </View>
 
-      {/* API error bar with retry */}
+      {/* API error bar */}
       {statusError && !loading ? (
         <TouchableOpacity style={styles.apiErrorBar} onPress={doFetch} activeOpacity={0.8}>
           <Text style={styles.apiErrorText}>
             Unable to load alert status. Check your connection.
           </Text>
-          <Text style={styles.apiErrorRetry}>Retry ↻</Text>
+          <View style={styles.apiErrorRetryRow}>
+            <Text style={styles.apiErrorRetry}>Retry</Text>
+            <Ionicons name="refresh" size={14} color={colors.ERROR_RED} />
+          </View>
         </TouchableOpacity>
       ) : null}
 
@@ -162,20 +259,16 @@ const AlertStatusScreen = ({ navigation, route }) => {
         <MapView
           style={styles.map}
           region={{
-            latitude: userCoord.latitude,
-            longitude: userCoord.longitude,
-            latitudeDelta: 0.015,
+            latitude:       userCoord.latitude,
+            longitude:      userCoord.longitude,
+            latitudeDelta:  0.015,
             longitudeDelta: 0.015,
           }}
           scrollEnabled={false}
         >
           <Marker coordinate={userCoord} pinColor={colors.SOS_RED} title="You" />
           {responderCoord && (
-            <Marker
-              coordinate={responderCoord}
-              pinColor={colors.SUCCESS_GREEN}
-              title="Responder"
-            />
+            <Marker coordinate={responderCoord} pinColor={colors.SUCCESS_GREEN} title="Responder" />
           )}
           {responderCoord && (
             <Polyline
@@ -196,9 +289,9 @@ const AlertStatusScreen = ({ navigation, route }) => {
             </View>
           )}
 
-          {/* Responder info — one card per assignment */}
+          {/* Responder cards */}
           {currentAlert?.assignments?.map((asgmt) => {
-            const ack = asgmt.acknowledgment;
+            const ack   = asgmt.acknowledgment;
             const phone = ack?.responder_contact || asgmt?.agency?.contact_phone;
             return (
               <View key={asgmt.assignment_id} style={styles.responderCard}>
@@ -208,7 +301,10 @@ const AlertStatusScreen = ({ navigation, route }) => {
                     style={styles.callBtn}
                     onPress={() => Linking.openURL(`tel:${phone}`)}
                   >
-                    <Text style={styles.callBtnText}>📞 Call</Text>
+                    <View style={styles.callBtnInner}>
+                      <Ionicons name="call-outline" size={14} color={colors.SUCCESS_GREEN} />
+                      <Text style={styles.callBtnText}>Call</Text>
+                    </View>
                   </TouchableOpacity>
                 )}
               </View>
@@ -225,7 +321,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Alert Details</Text>
             <Text style={styles.detailRow}>
-              Type: <Text style={styles.detailValue}>{currentAlert.alert_type}</Text>
+              Type: <Text style={styles.detailValue}>{currentAlert.alert_type?.replace(/_/g, ' ')}</Text>
             </Text>
             <Text style={styles.detailRow}>
               Priority: <Text style={styles.detailValue}>{currentAlert.priority_level}</Text>
@@ -240,29 +336,33 @@ const AlertStatusScreen = ({ navigation, route }) => {
             ) : null}
           </View>
 
-          {/* Cancel — only available while alert is still pending */}
-          {currentAlert.status === 'PENDING' && (
-            <OutlinedButton
-              title="Cancel Alert"
-              onPress={handleCancel}
-            />
+          {/* Cancel button — visible for PENDING/DISPATCHED within first 60 s */}
+          {canCancel && (
+            <TouchableOpacity style={styles.cancelAlertBtn} onPress={handleCancel} activeOpacity={0.8}>
+              <Ionicons name="close-circle-outline" size={18} color={colors.SOS_RED} />
+              <Text style={styles.cancelAlertText}>Cancel Alert</Text>
+              <View style={styles.cancelCountdownBadge}>
+                <Text style={styles.cancelCountdownText}>{cancelSecondsLeft}s</Text>
+              </View>
+            </TouchableOpacity>
           )}
 
-          {['RESOLVED', 'CANCELLED'].includes(currentAlert.status) && (
-            <TouchableOpacity
-              style={styles.doneBtn}
-              onPress={goHome}
-            >
+          {/* Back to Home after terminal */}
+          {TERMINAL_STATUSES.includes(currentAlert.status) && (
+            <TouchableOpacity style={styles.doneBtn} onPress={goHome}>
               <Text style={styles.doneBtnText}>Back to Home</Text>
             </TouchableOpacity>
           )}
         </View>
       </ScrollView>
+
+      {/* Toast */}
+      <Toast toast={toast} colors={colors} />
     </SafeAreaView>
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.BACKGROUND_LIGHT },
   header: {
     flexDirection: 'row',
@@ -273,9 +373,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.BORDER_GREY,
   },
-  headerOffsetForBanner: {
-    marginTop: 44,
-  },
+  headerOffsetForBanner: { marginTop: 44 },
   headerTitle: {
     fontSize: 17,
     fontWeight: '700',
@@ -285,9 +383,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.API_ERROR_BG,
     borderBottomWidth: 1,
-    borderBottomColor: '#FECACA',
+    borderBottomColor: colors.API_ERROR_BORDER,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
@@ -297,14 +395,17 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
+  apiErrorRetryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   apiErrorRetry: {
     fontSize: 13,
     fontWeight: '700',
     color: colors.ERROR_RED,
   },
-  map: {
-    height: 220,
-  },
+  map: { height: 220 },
   content: {
     padding: 20,
     gap: 16,
@@ -329,7 +430,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   responderCard: {
-    backgroundColor: colors.BACKGROUND_WHITE,
+    backgroundColor: colors.CARD_WHITE,
     borderRadius: 14,
     padding: 16,
     flexDirection: 'row',
@@ -349,10 +450,15 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   callBtn: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: colors.CALL_BTN_BG,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 100,
+  },
+  callBtnInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   callBtnText: {
     fontSize: 13,
@@ -360,7 +466,7 @@ const styles = StyleSheet.create({
     color: colors.SUCCESS_GREEN,
   },
   section: {
-    backgroundColor: colors.BACKGROUND_WHITE,
+    backgroundColor: colors.CARD_WHITE,
     borderRadius: 14,
     padding: 16,
     gap: 12,
@@ -381,14 +487,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.TEXT_MEDIUM,
     fontWeight: '500',
-    textTransform: 'capitalize',
   },
   detailValue: {
     color: colors.TEXT_DARK,
     fontWeight: '700',
+    textTransform: 'capitalize',
   },
-  cancelBtn: {
-    marginTop: 4,
+  cancelAlertBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: colors.SOS_RED,
+    borderRadius: 14,
+    paddingVertical: 14,
+    backgroundColor: colors.ERROR_CARD_BG,
+  },
+  cancelAlertText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.SOS_RED,
+    flex: 1,
+    textAlign: 'center',
+  },
+  cancelCountdownBadge: {
+    backgroundColor: colors.SOS_RED,
+    borderRadius: 100,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginRight: 8,
+  },
+  cancelCountdownText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   doneBtn: {
     backgroundColor: colors.PRIMARY_BLUE,
@@ -399,7 +532,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   doneBtnText: {
-    color: colors.BACKGROUND_WHITE,
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -411,6 +544,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...typography.screenSubtitle,
+    color: colors.TEXT_MEDIUM,
   },
   goHome: {
     fontSize: 15,

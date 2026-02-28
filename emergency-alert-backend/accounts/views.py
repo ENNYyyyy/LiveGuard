@@ -24,6 +24,7 @@ def get_tokens_for_user(user):
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = []  # Auth endpoints are exempt from the global UserRateThrottle
 
     def post(self, request):
         request_data = request.data.copy()
@@ -59,6 +60,7 @@ class RegisterView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = []  # Auth endpoints are exempt from the global UserRateThrottle
 
     def post(self, request):
         serializer = UserLoginSerializer(data=request.data, context={'request': request})

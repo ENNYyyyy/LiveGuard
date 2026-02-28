@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,8 @@ import SOSButton from '../../components/SOSButton';
 import LocationBar from '../../components/LocationBar';
 import NoInternetBanner from '../../components/NoInternetBanner';
 import useNetInfo from '../../hooks/useNetInfo';
-import colors from '../../utils/colors';
+import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../../context/ThemeContext';
 
 const HomeScreen = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -26,6 +27,8 @@ const HomeScreen = ({ navigation }) => {
     useSelector((state) => state.location);
   const user = useSelector((state) => state.auth.user);
   const { isConnected } = useNetInfo();
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {
     const init = async () => {
@@ -33,17 +36,14 @@ const HomeScreen = ({ navigation }) => {
       dispatch(getCurrentLocation());
       dispatch(fetchAlertHistory());
 
-      // Register push token every time the home screen mounts.
-      // getExpoPushTokenAsync returns the same token so this is idempotent.
       const token = await registerForPushNotifications();
       if (token) dispatch(registerDevice(token));
     };
     init();
 
     const cleanup = setupNotificationListeners(
-      () => {}, // foreground: banner already shown by the OS
+      () => {},
       (response) => {
-        // User tapped a notification — navigate to the relevant alert
         const data = response?.notification?.request?.content?.data;
         if (data?.alert_id) {
           navigation.navigate('AlertStatusScreen', { alertId: data.alert_id });
@@ -76,7 +76,6 @@ const HomeScreen = ({ navigation }) => {
     dispatch(fetchLocation());
   };
 
-  // Determine what to show in the location status area
   const renderLocationStatus = () => {
     if (permissionDenied) {
       return (
@@ -101,13 +100,12 @@ const HomeScreen = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Offline banner */}
       <NoInternetBanner visible={!isConnected} />
 
       {/* Header */}
       <View style={[styles.header, !isConnected && styles.headerOffsetForBanner]}>
         <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.menuBtn}>
-          <Text style={styles.menuIcon}>☰</Text>
+          <Ionicons name="menu-outline" size={26} color={colors.TEXT_DARK} />
         </TouchableOpacity>
 
         <View style={styles.headerCenter}>
@@ -129,7 +127,6 @@ const HomeScreen = ({ navigation }) => {
       </View>
 
       <View style={styles.content}>
-        {/* Location error/status strip */}
         {renderLocationStatus()}
 
         {/* SOS card */}
@@ -188,7 +185,7 @@ const HomeScreen = ({ navigation }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: colors.BACKGROUND_LIGHT,
@@ -202,17 +199,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.BORDER_GREY,
   },
-  // When banner is visible, push header down to avoid overlap
   headerOffsetForBanner: {
     marginTop: 44,
   },
   menuBtn: {
     width: 40,
     alignItems: 'flex-start',
-  },
-  menuIcon: {
-    fontSize: 24,
-    color: colors.TEXT_DARK,
   },
   headerCenter: {
     flex: 1,
@@ -243,7 +235,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarInitial: {
-    color: colors.BACKGROUND_WHITE,
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
@@ -298,12 +290,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 16,
   },
-  // Location status strip
   locationStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.ERROR_CARD_BG,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
@@ -323,7 +314,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.ERROR_CARD_BG,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
