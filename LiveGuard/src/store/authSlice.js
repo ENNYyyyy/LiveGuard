@@ -125,6 +125,33 @@ export const updateProfile = createAsyncThunk(
   }
 );
 
+export const changePassword = createAsyncThunk(
+  'auth/changePassword',
+  async ({ current_password, new_password }, { rejectWithValue }) => {
+    try {
+      await api.post('/api/auth/change-password/', { current_password, new_password });
+    } catch (err) {
+      return rejectWithValue(parseAuthError(err, 'Password change failed'));
+    }
+  }
+);
+
+export const deleteAccount = createAsyncThunk(
+  'auth/deleteAccount',
+  async ({ password }, { rejectWithValue }) => {
+    try {
+      await api.delete('/api/auth/delete-account/', { data: { password } });
+      await AsyncStorage.multiRemove([
+        STORAGE_KEYS.AUTH_TOKEN,
+        STORAGE_KEYS.REFRESH_TOKEN,
+        STORAGE_KEYS.USER_PROFILE,
+      ]);
+    } catch (err) {
+      return rejectWithValue(parseAuthError(err, 'Account deletion failed'));
+    }
+  }
+);
+
 export const registerDevice = createAsyncThunk(
   'auth/registerDevice',
   async (push_token, { rejectWithValue }) => {
@@ -200,6 +227,9 @@ const authSlice = createSlice({
 
     // registerDevice — fire and forget, no state change needed
     builder.addCase(registerDevice.rejected, (state, { payload }) => { state.error = payload; });
+
+    // deleteAccount — clear state on success
+    builder.addCase(deleteAccount.fulfilled, () => initialState);
   },
 });
 

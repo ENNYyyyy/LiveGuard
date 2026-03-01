@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,16 @@ import {
   StyleSheet,
   Linking,
   Switch,
+  Modal,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useDispatch } from 'react-redux';
 import { useTheme } from '../../context/ThemeContext';
+import { changePassword, deleteAccount } from '../../store/authSlice';
+import InputField from '../../components/InputField';
+import PrimaryButton from '../../components/PrimaryButton';
 
 const SettingRow = ({ icon, label, value, onPress, danger, colors, rightElement }) => {
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -36,7 +42,57 @@ const SettingRow = ({ icon, label, value, onPress, danger, colors, rightElement 
 
 const SettingsScreen = ({ navigation }) => {
   const { isDark, toggleTheme, colors } = useTheme();
+  const dispatch = useDispatch();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  // Change password modal
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [cpForm, setCpForm] = useState({ current: '', next: '', confirm: '' });
+  const [cpError, setCpError] = useState('');
+  const [cpLoading, setCpLoading] = useState(false);
+  const setCp = (key) => (val) => setCpForm((f) => ({ ...f, [key]: val }));
+
+  const handleChangePassword = async () => {
+    setCpError('');
+    if (!cpForm.current || !cpForm.next || !cpForm.confirm) {
+      setCpError('All fields are required.'); return;
+    }
+    if (cpForm.next !== cpForm.confirm) {
+      setCpError('New passwords do not match.'); return;
+    }
+    if (cpForm.next.length < 8) {
+      setCpError('Password must be at least 8 characters.'); return;
+    }
+    setCpLoading(true);
+    const result = await dispatch(changePassword({ current_password: cpForm.current, new_password: cpForm.next }));
+    setCpLoading(false);
+    if (changePassword.fulfilled.match(result)) {
+      setShowChangePassword(false);
+      setCpForm({ current: '', next: '', confirm: '' });
+      Alert.alert('Success', 'Password changed successfully.');
+    } else {
+      setCpError(result.payload || 'Failed to change password.');
+    }
+  };
+
+  // Delete account modal
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const handleDeleteAccount = async () => {
+    setDeleteError('');
+    if (!deletePassword) { setDeleteError('Password is required.'); return; }
+    setDeleteLoading(true);
+    const result = await dispatch(deleteAccount({ password: deletePassword }));
+    setDeleteLoading(false);
+    if (deleteAccount.fulfilled.match(result)) {
+      setShowDeleteAccount(false);
+    } else {
+      setDeleteError(result.payload || 'Failed to delete account.');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -103,6 +159,23 @@ const SettingsScreen = ({ navigation }) => {
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Account</Text>
+          <SettingRow
+            icon={<Ionicons name="lock-closed-outline" size={20} color={colors.TEXT_MEDIUM} />}
+            label="Change Password"
+            onPress={() => setShowChangePassword(true)}
+            colors={colors}
+          />
+          <SettingRow
+            icon={<Ionicons name="trash-outline" size={20} color={colors.ACCENT_RED} />}
+            label="Delete Account"
+            onPress={() => setShowDeleteAccount(true)}
+            colors={colors}
+            danger
+          />
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionLabel}>Support</Text>
           <SettingRow
             icon={<Ionicons name="help-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
@@ -136,6 +209,47 @@ const SettingsScreen = ({ navigation }) => {
           />
         </View>
       </ScrollView>
+
+      {/* Change Password Modal */}
+      <Modal visible={showChangePassword} transparent animationType="slide" onRequestClose={() => setShowChangePassword(false)}>
+        <TouchableOpacity style={settingModalStyles.overlay} activeOpacity={1} onPress={() => setShowChangePassword(false)}>
+          <TouchableOpacity activeOpacity={1} style={[settingModalStyles.sheet, { backgroundColor: colors.BACKGROUND_WHITE }]}>
+            <View style={[settingModalStyles.handle, { backgroundColor: colors.BORDER_GREY }]} />
+            <Text style={[settingModalStyles.title, { color: colors.TEXT_DARK }]}>Change Password</Text>
+            {cpError ? <Text style={[settingModalStyles.errorText, { color: colors.ERROR_RED }]}>{cpError}</Text> : null}
+            <View style={settingModalStyles.fields}>
+              <InputField label="Current Password" placeholder="Current password" value={cpForm.current} onChangeText={setCp('current')} secureTextEntry />
+              <InputField label="New Password" placeholder="New password" value={cpForm.next} onChangeText={setCp('next')} secureTextEntry />
+              <InputField label="Confirm New Password" placeholder="Confirm new password" value={cpForm.confirm} onChangeText={setCp('confirm')} secureTextEntry />
+            </View>
+            <PrimaryButton title="Update Password" onPress={handleChangePassword} loading={cpLoading} />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Delete Account Modal */}
+      <Modal visible={showDeleteAccount} transparent animationType="slide" onRequestClose={() => setShowDeleteAccount(false)}>
+        <TouchableOpacity style={settingModalStyles.overlay} activeOpacity={1} onPress={() => setShowDeleteAccount(false)}>
+          <TouchableOpacity activeOpacity={1} style={[settingModalStyles.sheet, { backgroundColor: colors.BACKGROUND_WHITE }]}>
+            <View style={[settingModalStyles.handle, { backgroundColor: colors.BORDER_GREY }]} />
+            <Text style={[settingModalStyles.title, { color: colors.TEXT_DARK }]}>Delete Account</Text>
+            <Text style={[settingModalStyles.sub, { color: colors.TEXT_MEDIUM }]}>
+              This action is permanent and cannot be undone. Enter your password to confirm.
+            </Text>
+            {deleteError ? <Text style={[settingModalStyles.errorText, { color: colors.ERROR_RED }]}>{deleteError}</Text> : null}
+            <View style={settingModalStyles.fields}>
+              <InputField label="Password" placeholder="Enter your password" value={deletePassword} onChangeText={setDeletePassword} secureTextEntry />
+            </View>
+            <TouchableOpacity
+              style={[settingModalStyles.dangerBtn, { backgroundColor: colors.ACCENT_RED }]}
+              onPress={handleDeleteAccount}
+              disabled={deleteLoading}
+            >
+              <Text style={settingModalStyles.dangerBtnText}>{deleteLoading ? 'Deleting…' : 'Delete My Account'}</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -212,6 +326,58 @@ const makeStyles = (colors) => StyleSheet.create({
   rowValue: {
     fontSize: 12,
     color: colors.PLACEHOLDER_GREY,
+  },
+});
+
+const settingModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 20,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  sub: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  errorText: {
+    fontSize: 13,
+    marginBottom: 8,
+    fontWeight: '500',
+  },
+  fields: {
+    gap: 12,
+    marginBottom: 20,
+  },
+  dangerBtn: {
+    height: 52,
+    borderRadius: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dangerBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
 

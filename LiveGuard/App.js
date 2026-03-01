@@ -9,6 +9,13 @@ import store from './src/store/store';
 import AppNavigator from './src/navigation/AppNavigator';
 import { configureNotifications } from './src/services/notificationService';
 import { navigationRef } from './src/navigation/navigationRef';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
+import { StatusBar } from 'expo-status-bar';
+
+function ThemedStatusBar() {
+  const { isDark } = useTheme();
+  return <StatusBar style={isDark ? 'light' : 'dark'} />;
+}
 
 configureNotifications();
 
@@ -17,9 +24,12 @@ export default function App() {
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         <Provider store={store}>
-          <NavigationContainer ref={navigationRef}>
-            <AppNavigator />
-          </NavigationContainer>
+          <ThemeProvider>
+            <ThemedStatusBar />
+            <NavigationContainer ref={navigationRef}>
+              <AppNavigator />
+            </NavigationContainer>
+          </ThemeProvider>
         </Provider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

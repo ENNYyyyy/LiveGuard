@@ -69,6 +69,7 @@ class UserLoginSerializer(serializers.Serializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
+    admin_level = serializers.SerializerMethodField()
     is_agency_user = serializers.SerializerMethodField()
     agency_id = serializers.SerializerMethodField()
     agency_name = serializers.SerializerMethodField()
@@ -80,11 +81,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'user_id', 'full_name', 'email', 'phone_number',
             'emergency_contact_name', 'emergency_contact_phone',
             'address', 'date_joined',
-            'role', 'is_agency_user', 'agency_id', 'agency_name', 'agency_role',
+            'role', 'admin_level', 'is_agency_user', 'agency_id', 'agency_name', 'agency_role',
         ]
         read_only_fields = [
             'user_id', 'email', 'date_joined',
-            'role', 'is_agency_user', 'agency_id', 'agency_name', 'agency_role',
+            'role', 'admin_level', 'is_agency_user', 'agency_id', 'agency_name', 'agency_role',
         ]
 
     def validate_phone_number(self, value):
@@ -99,8 +100,20 @@ class UserProfileSerializer(serializers.ModelSerializer):
         except ObjectDoesNotExist:
             return None
 
+    def _admin_profile(self, obj):
+        try:
+            return obj.systemadmin
+        except ObjectDoesNotExist:
+            return None
+
     def get_role(self, obj):
+        if self._admin_profile(obj):
+            return 'ADMIN'
         return 'AGENCY' if self._agency_profile(obj) else 'CIVILIAN'
+
+    def get_admin_level(self, obj):
+        profile = self._admin_profile(obj)
+        return profile.admin_level if profile else None
 
     def get_is_agency_user(self, obj):
         return bool(self._agency_profile(obj))

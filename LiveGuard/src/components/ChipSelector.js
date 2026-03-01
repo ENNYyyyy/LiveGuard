@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
-import colors from '../utils/colors';
+import { useTheme } from '../context/ThemeContext';
 
 const ChipSelector = ({ label, options, selectedKey, onSelect, required }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <View>
       {label && (
@@ -32,11 +35,11 @@ const ChipSelector = ({ label, options, selectedKey, onSelect, required }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   sectionLabel: {
     fontSize: 16,
-    fontWeight: '600',
-    color: colors.TEXT_DARK,
+    fontWeight: '700',
+    color: colors.PRIMARY_BLUE,
     marginBottom: 10,
   },
   required: {
@@ -59,7 +62,7 @@ const styles = StyleSheet.create({
   },
   chipActive: {
     borderColor: colors.PRIMARY_BLUE,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.CHIP_ACTIVE_BG,
   },
   chipLabel: {
     fontSize: 14,
@@ -68,6 +71,7 @@ const styles = StyleSheet.create({
   },
   chipLabelActive: {
     color: colors.PRIMARY_BLUE,
+    fontWeight: '600',
   },
 });
 

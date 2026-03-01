@@ -12,6 +12,7 @@ import {
   Linking,
   Platform,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch, useSelector } from 'react-redux';
@@ -42,6 +43,11 @@ const EmergencyAlertScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(false);
   const [hasPendingAlert, setHasPendingAlert] = useState(false);
   const [emergencyContacts, setEmergencyContacts] = useState([]);
+
+  // SOS countdown state
+  const [showCountdown, setShowCountdown] = useState(false);
+  const [countdownVal, setCountdownVal] = useState(3);
+  const countdownRef = useRef(null);
 
   // Success notification state
   const [showSuccess, setShowSuccess] = useState(false);
@@ -76,9 +82,33 @@ const EmergencyAlertScreen = ({ navigation }) => {
     return Object.keys(e).length === 0;
   };
 
-  const handleConfirm = async () => {
+  const startCountdown = () => {
     if (!validate()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    setCountdownVal(3);
+    setShowCountdown(true);
+    let val = 3;
+    countdownRef.current = setInterval(() => {
+      val -= 1;
+      if (val <= 0) {
+        clearInterval(countdownRef.current);
+        setShowCountdown(false);
+        sendAlert();
+      } else {
+        setCountdownVal(val);
+      }
+    }, 1000);
+  };
 
+  const cancelCountdown = () => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    setShowCountdown(false);
+  };
+
+  // Clean up countdown on unmount
+  useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
+
+  const sendAlert = async () => {
     setLoading(true);
     try {
       const locationData = await getFullLocationData();
@@ -100,7 +130,8 @@ const EmergencyAlertScreen = ({ navigation }) => {
         setHasPendingAlert(false);
         setLoading(false);
 
-        // Show success notification ON THIS SCREEN first
+        // Haptic + success notification
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setShowSuccess(true);
         Animated.parallel([
           Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, friction: 6 }),
@@ -201,7 +232,7 @@ const EmergencyAlertScreen = ({ navigation }) => {
           <View style={styles.errorCard}>
             <Text style={styles.errorCardTitle}>Alert Failed</Text>
             <Text style={styles.errorCardMsg}>{submitError}</Text>
-            <TouchableOpacity style={styles.errorRetryBtn} onPress={handleConfirm} disabled={loading}>
+            <TouchableOpacity style={styles.errorRetryBtn} onPress={startCountdown} disabled={loading}>
               <Text style={styles.errorRetryBtnText}>Retry</Text>
             </TouchableOpacity>
           </View>
@@ -245,7 +276,7 @@ const EmergencyAlertScreen = ({ navigation }) => {
 
         <PrimaryButton
           title="Confirm Emergency Alert"
-          onPress={handleConfirm}
+          onPress={startCountdown}
           loading={loading}
         />
 
@@ -253,6 +284,20 @@ const EmergencyAlertScreen = ({ navigation }) => {
           <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      {/* SOS Countdown Modal */}
+      <Modal visible={showCountdown} transparent animationType="fade">
+        <View style={styles.successOverlay}>
+          <View style={styles.countdownCard}>
+            <Ionicons name="warning" size={40} color={colors.SOS_RED} style={{ marginBottom: 12 }} />
+            <Text style={styles.countdownTitle}>Sending SOS in…</Text>
+            <Text style={styles.countdownNumber}>{countdownVal}</Text>
+            <TouchableOpacity style={styles.countdownCancelBtn} onPress={cancelCountdown}>
+              <Text style={styles.countdownCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Alert Sent Success overlay — shown on THIS screen before navigating */}
       <Modal visible={showSuccess} transparent animationType="none">
@@ -275,14 +320,14 @@ const EmergencyAlertScreen = ({ navigation }) => {
                 activeOpacity={0.8}
               >
                 <View style={styles.notifyBtnInner}>
-                  <Ionicons name="phone-portrait-outline" size={16} color="#2563EB" />
+                  <Ionicons name="phone-portrait-outline" size={16} color={colors.PRIMARY_BLUE} />
                   <Text style={styles.notifyBtnText}>
                     Notify {emergencyContacts.length} emergency contact{emergencyContacts.length > 1 ? 's' : ''}
                   </Text>
                 </View>
               </TouchableOpacity>
             )}
-            <ActivityIndicator color="#2563EB" size="small" style={styles.successSpinner} />
+            <ActivityIndicator color={colors.PRIMARY_BLUE} size="small" style={styles.successSpinner} />
           </Animated.View>
         </View>
       </Modal>
@@ -423,6 +468,38 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   gap20: { height: 20 },
   gap32: { height: 32 },
+  // Countdown card
+  countdownCard: {
+    backgroundColor: colors.BACKGROUND_WHITE,
+    borderRadius: 24,
+    padding: 36,
+    alignItems: 'center',
+    width: 260,
+  },
+  countdownTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.TEXT_DARK,
+    marginBottom: 12,
+  },
+  countdownNumber: {
+    fontSize: 72,
+    fontWeight: '900',
+    color: colors.SOS_RED,
+    lineHeight: 80,
+  },
+  countdownCancelBtn: {
+    marginTop: 24,
+    backgroundColor: colors.BORDER_GREY,
+    borderRadius: 100,
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+  },
+  countdownCancelText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.TEXT_DARK,
+  },
   // Success overlay (modal)
   successOverlay: {
     flex: 1,
@@ -431,7 +508,7 @@ const makeStyles = (colors) => StyleSheet.create({
     justifyContent: 'center',
   },
   successCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.CARD_WHITE,
     borderRadius: 24,
     padding: 36,
     alignItems: 'center',
@@ -448,18 +525,18 @@ const makeStyles = (colors) => StyleSheet.create({
   successTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#111827',
+    color: colors.TEXT_DARK,
     marginBottom: 8,
   },
   successSub: {
     fontSize: 14,
-    color: '#6B7280',
+    color: colors.TEXT_MEDIUM,
     textAlign: 'center',
     lineHeight: 21,
   },
   notifyBtn: {
     marginTop: 16,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.CHIP_ACTIVE_BG,
     borderRadius: 100,
     paddingHorizontal: 20,
     paddingVertical: 10,
@@ -474,7 +551,7 @@ const makeStyles = (colors) => StyleSheet.create({
   notifyBtnText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#2563EB',
+    color: colors.PRIMARY_BLUE,
   },
   successSpinner: {
     marginTop: 16,

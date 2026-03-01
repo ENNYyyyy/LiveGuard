@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { TouchableOpacity, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import colors from '../utils/colors';
-import typography from '../utils/typography';
+import { useTheme } from '../context/ThemeContext';
 
 const PrimaryButton = ({ title, onPress, loading = false, disabled = false }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <TouchableOpacity
       style={[styles.button, (disabled || loading) && styles.buttonDisabled]}
@@ -12,7 +14,7 @@ const PrimaryButton = ({ title, onPress, loading = false, disabled = false }) =>
       activeOpacity={0.85}
     >
       {loading ? (
-        <ActivityIndicator color={colors.BACKGROUND_WHITE} size="small" />
+        <ActivityIndicator color="#FFFFFF" size="small" />
       ) : (
         <Text style={styles.label}>{title}</Text>
       )}
@@ -20,7 +22,7 @@ const PrimaryButton = ({ title, onPress, loading = false, disabled = false }) =>
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   button: {
     backgroundColor: colors.PRIMARY_BLUE,
     height: 56,
@@ -33,7 +35,9 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   label: {
-    ...typography.primaryButton,
+    fontWeight: '600',
+    fontSize: 18,
+    color: '#FFFFFF',
   },
 });
 

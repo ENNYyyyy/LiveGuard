@@ -1,33 +1,67 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  Switch,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { useDispatch, useSelector } from 'react-redux';
-import { loginUser, clearError } from '../../store/authSlice';
+import { loginUser, clearError, loadStoredAuth } from '../../store/authSlice';
 import LogoHeader from '../../components/LogoHeader';
 import InputField from '../../components/InputField';
 import PrimaryButton from '../../components/PrimaryButton';
 import SocialAuthButtons from '../../components/SocialAuthButtons';
-import colors from '../../utils/colors';
-import typography from '../../utils/typography';
+import { useTheme } from '../../context/ThemeContext';
+import { Ionicons } from '@expo/vector-icons';
+import { STORAGE_KEYS } from '../../utils/constants';
+
+const REMEMBERED_EMAIL_KEY = 'REMEMBERED_EMAIL';
 
 const LoginScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const { loading, error, isAuthenticated } = useSelector((state) => state.auth);
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  const [email, setEmail]       = useState('');
-  const [password, setPassword] = useState('');
-  const [errors, setErrors]     = useState({});
+  const [email, setEmail]           = useState('');
+  const [password, setPassword]     = useState('');
+  const [errors, setErrors]         = useState({});
+  const [rememberMe, setRememberMe] = useState(false);
+  const [hasBiometric, setHasBiometric] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) navigation.replace('MainDrawer');
   }, [isAuthenticated]);
 
   useEffect(() => { return () => dispatch(clearError()); }, []);
+
+  // Load remembered email + check biometric availability
+  useEffect(() => {
+    (async () => {
+      const savedEmail = await AsyncStorage.getItem(REMEMBERED_EMAIL_KEY);
+      if (savedEmail) { setEmail(savedEmail); setRememberMe(true); }
+
+      const token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      const compatible = await LocalAuthentication.hasHardwareAsync();
+      const enrolled   = await LocalAuthentication.isEnrolledAsync();
+      setHasBiometric(compatible && enrolled && !!token);
+    })();
+  }, []);
+
+  const handleBiometricLogin = async () => {
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: 'Verify to log in',
+      fallbackLabel: 'Use Password',
+      cancelLabel: 'Cancel',
+    });
+    if (result.success) {
+      dispatch(loadStoredAuth());
+    }
+  };
 
   const validate = () => {
     const e = {};
@@ -37,14 +71,19 @@ const LoginScreen = ({ navigation }) => {
     return Object.keys(e).length === 0;
   };
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!validate()) return;
+    if (rememberMe) {
+      await AsyncStorage.setItem(REMEMBERED_EMAIL_KEY, email.trim());
+    } else {
+      await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
+    }
     dispatch(loginUser({ email: email.trim(), password }));
   };
 
   return (
     <View style={styles.flex}>
-      {/* Decorative pink circle */}
+      {/* Decorative circle */}
       <View style={[styles.decorCircle, { pointerEvents: 'none' }]} />
 
       <ScrollView
@@ -91,15 +130,38 @@ const LoginScreen = ({ navigation }) => {
           error={errors.password}
         />
 
-        {/* Forgotten password */}
-        <TouchableOpacity style={styles.forgotRow}>
-          <Text style={styles.forgotText}>Forgotten Password?</Text>
-        </TouchableOpacity>
+        {/* Remember Me + Forgot password row */}
+        <View style={styles.rememberRow}>
+          <View style={styles.rememberLeft}>
+            <Switch
+              value={rememberMe}
+              onValueChange={setRememberMe}
+              thumbColor={colors.BACKGROUND_WHITE}
+              trackColor={{ false: colors.BORDER_GREY, true: colors.PRIMARY_BLUE }}
+              style={styles.rememberSwitch}
+            />
+            <Text style={styles.rememberText}>Remember me</Text>
+          </View>
+          <TouchableOpacity>
+            <Text style={styles.forgotText}>Forgot Password?</Text>
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.gap24} />
 
         {/* Login button */}
         <PrimaryButton title="Login" onPress={handleLogin} loading={loading} />
+
+        {/* Biometric login */}
+        {hasBiometric && (
+          <>
+            <View style={styles.gap16} />
+            <TouchableOpacity style={[styles.biometricBtn, { borderColor: colors.BORDER_GREY }]} onPress={handleBiometricLogin} activeOpacity={0.8}>
+              <Ionicons name="finger-print-outline" size={22} color={colors.PRIMARY_BLUE} />
+              <Text style={[styles.biometricText, { color: colors.PRIMARY_BLUE }]}>Login with Biometrics</Text>
+            </TouchableOpacity>
+          </>
+        )}
 
         <View style={styles.gap16} />
 
@@ -119,7 +181,7 @@ const LoginScreen = ({ navigation }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   flex: {
     flex: 1,
     backgroundColor: colors.BACKGROUND_WHITE,
@@ -143,24 +205,59 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    ...typography.screenTitle,
+    fontWeight: '700',
+    fontSize: 28,
+    color: colors.TEXT_DARK,
     textAlign: 'center',
   },
   subtitle: {
-    ...typography.screenSubtitle,
+    fontWeight: '400',
+    fontSize: 16,
+    color: colors.TEXT_MEDIUM,
     textAlign: 'center',
   },
   backendError: {
-    ...typography.errorText,
+    fontSize: 13,
+    color: colors.ERROR_RED,
     textAlign: 'center',
     marginBottom: 12,
   },
-  forgotRow: {
-    alignSelf: 'flex-end',
+  rememberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginTop: 8,
   },
+  rememberLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  rememberSwitch: {
+    transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }],
+  },
+  rememberText: {
+    fontSize: 14,
+    color: colors.TEXT_MEDIUM,
+    fontWeight: '500',
+  },
   forgotText: {
-    ...typography.link,
+    fontWeight: '600',
+    fontSize: 14,
+    color: colors.LINK_BLUE,
+  },
+  biometricBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    height: 50,
+    borderRadius: 100,
+    borderWidth: 1.5,
+  },
+  biometricText: {
+    fontSize: 15,
+    fontWeight: '700',
   },
   signupRow: {
     flexDirection: 'row',
@@ -172,7 +269,9 @@ const styles = StyleSheet.create({
     color: colors.TEXT_MEDIUM,
   },
   signupLink: {
-    ...typography.link,
+    fontWeight: '600',
+    fontSize: 14,
+    color: colors.LINK_BLUE,
   },
   gap16: { height: 16 },
   gap24: { height: 24 },

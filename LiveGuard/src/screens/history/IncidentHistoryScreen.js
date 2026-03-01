@@ -4,7 +4,6 @@ import {
   Text,
   FlatList,
   StyleSheet,
-  ActivityIndicator,
   TouchableOpacity,
   Modal,
   Pressable,
@@ -15,6 +14,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Ionicons } from '@expo/vector-icons';
 import { fetchAlertHistory } from '../../store/alertSlice';
 import IncidentCard from '../../components/IncidentCard';
+import { SkeletonIncidentCard } from '../../components/SkeletonCard';
 import NoInternetBanner from '../../components/NoInternetBanner';
 import useNetInfo from '../../hooks/useNetInfo';
 import { useTheme } from '../../context/ThemeContext';
@@ -354,8 +354,8 @@ const IncidentHistoryScreen = ({ navigation }) => {
       </View>
 
       {loading && alertHistory.length === 0 ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.PRIMARY_BLUE} />
+        <View style={styles.list}>
+          {[1, 2, 3, 4, 5].map((i) => <SkeletonIncidentCard key={i} />)}
         </View>
       ) : (
         <>

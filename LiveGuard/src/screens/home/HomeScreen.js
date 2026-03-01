@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   Image,
   Alert,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker } from 'react-native-maps';
 import { useDispatch, useSelector } from 'react-redux';
@@ -20,6 +21,8 @@ import NoInternetBanner from '../../components/NoInternetBanner';
 import useNetInfo from '../../hooks/useNetInfo';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
+import { DARK_MAP_STYLE } from '../../utils/mapStyles';
+import useShake from '../../hooks/useShake';
 
 const HomeScreen = ({ navigation }) => {
   const dispatch = useDispatch();
@@ -27,7 +30,7 @@ const HomeScreen = ({ navigation }) => {
     useSelector((state) => state.location);
   const user = useSelector((state) => state.auth.user);
   const { isConnected } = useNetInfo();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {
@@ -57,7 +60,8 @@ const HomeScreen = ({ navigation }) => {
   const permissionDenied = permissionStatus === 'denied';
   const hasLocationError = locationError === 'timeout' || locationError === 'unavailable';
 
-  const handleSOSPress = () => {
+  const handleSOSPress = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     if (!isConnected) {
       Alert.alert(
         'No internet connection',
@@ -70,7 +74,9 @@ const HomeScreen = ({ navigation }) => {
     } else {
       navigation.navigate('EmergencyAlertScreen');
     }
-  };
+  }, [isConnected, navigation]);
+
+  useShake(handleSOSPress);
 
   const handleRetryLocation = () => {
     dispatch(fetchLocation());
@@ -154,6 +160,8 @@ const HomeScreen = ({ navigation }) => {
               zoomEnabled={false}
               pitchEnabled={false}
               rotateEnabled={false}
+              customMapStyle={isDark ? DARK_MAP_STYLE : []}
+              userInterfaceStyle={isDark ? 'dark' : 'light'}
             >
               <Marker
                 coordinate={{ latitude, longitude }}
@@ -172,6 +180,14 @@ const HomeScreen = ({ navigation }) => {
               </Text>
             </View>
           )}
+          {/* Locate-me FAB */}
+          <TouchableOpacity
+            style={[styles.locateMeBtn, { backgroundColor: colors.BACKGROUND_WHITE }]}
+            onPress={handleRetryLocation}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="locate" size={18} color={colors.PRIMARY_BLUE} />
+          </TouchableOpacity>
         </View>
 
         {/* Location bar */}
@@ -283,6 +299,21 @@ const makeStyles = (colors) => StyleSheet.create({
     backgroundColor: colors.BORDER_GREY,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  locateMeBtn: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
   },
   mapPlaceholderText: {
     fontSize: 13,

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { setLocation } from '../../store/locationSlice';
 import { reverseGeocode } from '../../services/locationService';
 import PrimaryButton from '../../components/PrimaryButton';
-import colors from '../../utils/colors';
+import { useTheme } from '../../context/ThemeContext';
+import { DARK_MAP_STYLE } from '../../utils/mapStyles';
 
 const DEFAULT_REGION = {
   latitude: 6.5244,
@@ -39,6 +40,8 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 const LocationPickerScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const { latitude, longitude, address: storedAddress } = useSelector((state) => state.location);
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const initialRegion =
     latitude && longitude
@@ -56,7 +59,6 @@ const LocationPickerScreen = ({ navigation }) => {
   const mapRef      = useRef(null);
   const debounceRef = useRef(null);
 
-  // Reverse geocode new map center after drag
   const handleRegionChangeComplete = useCallback(async (newRegion) => {
     const coords = { latitude: newRegion.latitude, longitude: newRegion.longitude };
     setPinCoords(coords);
@@ -71,7 +73,6 @@ const LocationPickerScreen = ({ navigation }) => {
     }
   }, []);
 
-  // Geocode search query with 500 ms debounce
   const handleSearch = useCallback(
     (text) => {
       setSearchText(text);
@@ -142,14 +143,16 @@ const LocationPickerScreen = ({ navigation }) => {
         style={StyleSheet.absoluteFill}
         initialRegion={initialRegion}
         onRegionChangeComplete={handleRegionChangeComplete}
+        customMapStyle={isDark ? DARK_MAP_STYLE : []}
+        userInterfaceStyle={isDark ? 'dark' : 'light'}
       />
 
-      {/* Fixed center pin — pointer-events none so map receives touches */}
+      {/* Fixed center pin */}
       <View style={styles.centerPinWrapper} pointerEvents="none">
         <Text style={styles.centerPin}>📍</Text>
       </View>
 
-      {/* Top floating bar — hidden while search is open */}
+      {/* Top floating bar */}
       {!searchFocused && (
         <View style={styles.topBar}>
           <TouchableOpacity style={styles.topBarInner} onPress={() => navigation.goBack()}>
@@ -159,7 +162,7 @@ const LocationPickerScreen = ({ navigation }) => {
         </View>
       )}
 
-      {/* ── Normal bottom sheet ── */}
+      {/* Normal bottom sheet */}
       {!searchFocused ? (
         <View style={styles.bottomSheet}>
           <View style={styles.sheetHandle} />
@@ -168,7 +171,6 @@ const LocationPickerScreen = ({ navigation }) => {
 
           <View style={styles.gap12} />
 
-          {/* Search row — tappable, opens search mode */}
           <TouchableOpacity style={styles.searchRow} onPress={openSearch} activeOpacity={0.8}>
             <Text style={styles.pinIcon}>📍</Text>
             <Text
@@ -181,11 +183,10 @@ const LocationPickerScreen = ({ navigation }) => {
           </TouchableOpacity>
 
           <View style={styles.gap20} />
-
           <PrimaryButton title="Pick your Current Location" onPress={handlePickLocation} />
         </View>
       ) : (
-        /* ── Expanded search sheet ── */
+        /* Expanded search sheet */
         <View style={styles.expandedSheet}>
           <View style={styles.expandedHeader}>
             <TouchableOpacity onPress={closeSearch} style={styles.expandedBack}>
@@ -255,23 +256,17 @@ const LocationPickerScreen = ({ navigation }) => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+const makeStyles = (colors) => StyleSheet.create({
+  container: { flex: 1 },
 
-  // Center pin
   centerPinWrapper: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: -28, // shift up so pin tip lands at exact center
+    marginTop: -28,
   },
-  centerPin: {
-    fontSize: 40,
-  },
+  centerPin: { fontSize: 40 },
 
-  // Top floating bar
   topBar: {
     position: 'absolute',
     top: 52,
@@ -287,22 +282,10 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  topBarInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  topBarArrow: {
-    fontSize: 20,
-    color: colors.TEXT_DARK,
-  },
-  topBarTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.TEXT_DARK,
-  },
+  topBarInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  topBarArrow: { fontSize: 20, color: colors.TEXT_DARK },
+  topBarTitle: { fontSize: 15, fontWeight: '600', color: colors.TEXT_DARK },
 
-  // Normal bottom sheet
   bottomSheet: {
     position: 'absolute',
     bottom: 0,
@@ -327,19 +310,9 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: 20,
   },
-  sheetTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.TEXT_DARK,
-    marginBottom: 4,
-  },
-  sheetSubtitle: {
-    fontSize: 14,
-    fontWeight: '400',
-    color: colors.TEXT_MEDIUM,
-  },
+  sheetTitle: { fontSize: 20, fontWeight: '700', color: colors.TEXT_DARK, marginBottom: 4 },
+  sheetSubtitle: { fontSize: 14, color: colors.TEXT_MEDIUM },
 
-  // Search row (shared between modes)
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -350,28 +323,12 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 8,
   },
-  pinIcon: {
-    fontSize: 18,
-  },
-  searchDisplay: {
-    flex: 1,
-    fontSize: 14,
-    color: colors.TEXT_DARK,
-  },
-  placeholder: {
-    color: colors.PLACEHOLDER_GREY,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: colors.TEXT_DARK,
-    paddingVertical: 0,
-  },
-  searchIconText: {
-    fontSize: 16,
-  },
+  pinIcon: { fontSize: 18 },
+  searchDisplay: { flex: 1, fontSize: 14, color: colors.TEXT_DARK },
+  placeholder: { color: colors.PLACEHOLDER_GREY },
+  searchInput: { flex: 1, fontSize: 14, color: colors.TEXT_DARK, paddingVertical: 0 },
+  searchIconText: { fontSize: 16 },
 
-  // Expanded search sheet
   expandedSheet: {
     position: 'absolute',
     top: 0,
@@ -382,67 +339,20 @@ const styles = StyleSheet.create({
     paddingTop: 56,
     paddingHorizontal: 20,
   },
-  expandedHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 12,
-  },
-  expandedBack: {
-    padding: 4,
-  },
-  expandedTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.TEXT_DARK,
-    flex: 1,
-  },
+  expandedHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 12 },
+  expandedBack: { padding: 4 },
+  expandedTitle: { fontSize: 16, fontWeight: '700', color: colors.TEXT_DARK, flex: 1 },
 
-  // Results list
-  resultsList: {
-    marginTop: 8,
-  },
-  resultRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    gap: 12,
-  },
-  resultMeta: {
-    alignItems: 'center',
-    minWidth: 44,
-  },
-  clockIcon: {
-    fontSize: 16,
-  },
-  distanceText: {
-    fontSize: 11,
-    color: colors.TEXT_MEDIUM,
-    marginTop: 2,
-  },
-  resultBody: {
-    flex: 1,
-  },
-  resultName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.TEXT_DARK,
-  },
-  resultAddress: {
-    fontSize: 12,
-    color: colors.TEXT_MEDIUM,
-    marginTop: 2,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.BORDER_GREY,
-  },
-  noResults: {
-    fontSize: 14,
-    color: colors.TEXT_MEDIUM,
-    textAlign: 'center',
-    paddingTop: 32,
-  },
+  resultsList: { marginTop: 8 },
+  resultRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 12 },
+  resultMeta: { alignItems: 'center', minWidth: 44 },
+  clockIcon: { fontSize: 16 },
+  distanceText: { fontSize: 11, color: colors.TEXT_MEDIUM, marginTop: 2 },
+  resultBody: { flex: 1 },
+  resultName: { fontSize: 14, fontWeight: '600', color: colors.TEXT_DARK },
+  resultAddress: { fontSize: 12, color: colors.TEXT_MEDIUM, marginTop: 2 },
+  divider: { height: 1, backgroundColor: colors.BORDER_GREY },
+  noResults: { fontSize: 14, color: colors.TEXT_MEDIUM, textAlign: 'center', paddingTop: 32 },
 
   gap12: { height: 12 },
   gap20: { height: 20 },

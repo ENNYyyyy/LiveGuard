@@ -151,3 +151,52 @@ class LogoutView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
         return Response({'message': 'Logged out successfully.'}, status=status.HTTP_200_OK)
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        current_password = request.data.get('current_password', '')
+        new_password = request.data.get('new_password', '')
+
+        if not current_password or not new_password:
+            return error_response(
+                detail='current_password and new_password are required.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if not request.user.check_password(current_password):
+            return error_response(
+                detail='Current password is incorrect.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+                errors={'current_password': ['Incorrect password.']},
+            )
+        if len(new_password) < 8:
+            return error_response(
+                detail='New password must be at least 8 characters.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+                errors={'new_password': ['Password too short.']},
+            )
+        request.user.set_password(new_password)
+        request.user.save(update_fields=['password'])
+        return Response({'message': 'Password changed successfully.'}, status=status.HTTP_200_OK)
+
+
+class DeleteAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request):
+        password = request.data.get('password', '')
+        if not password:
+            return error_response(
+                detail='Password is required to delete your account.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if not request.user.check_password(password):
+            return error_response(
+                detail='Incorrect password.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+                errors={'password': ['Incorrect password.']},
+            )
+        request.user.delete()
+        return Response({'message': 'Account deleted successfully.'}, status=status.HTTP_200_OK)

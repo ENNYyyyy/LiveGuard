@@ -8,19 +8,23 @@ import {
   Linking,
   Alert,
   Animated,
+  Modal,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch, useSelector } from 'react-redux';
-import { cancelAlert, fetchAlertStatus, updateAlertLocation } from '../../store/alertSlice';
+import { cancelAlert, fetchAlertStatus, updateAlertLocation, rateAlert } from '../../store/alertSlice';
 import StatusTimeline from '../../components/StatusTimeline';
 import StatusBadge from '../../components/StatusBadge';
 import NoInternetBanner from '../../components/NoInternetBanner';
 import useNetInfo from '../../hooks/useNetInfo';
 import { useTheme } from '../../context/ThemeContext';
+import { DARK_MAP_STYLE } from '../../utils/mapStyles';
 import typography from '../../utils/typography';
 import { formatTime } from '../../utils/helpers';
 
@@ -39,6 +43,7 @@ function buildSteps(status, createdAt) {
 
 const TERMINAL_STATUSES    = ['RESOLVED', 'CANCELLED'];
 const CANCELLABLE_STATUSES = ['PENDING', 'DISPATCHED'];
+const RATED_ALERTS_KEY     = 'RATED_ALERTS';
 
 // ── Simple inline toast ────────────────────────────────────────────────────────
 const Toast = ({ toast, colors }) => {
@@ -107,11 +112,26 @@ const AlertStatusScreen = ({ navigation, route }) => {
   const isFocused = useIsFocused();
   const locationSubscription = useRef(null);
   const toastTimer = useRef(null);
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [cancelSecondsLeft, setCancelSecondsLeft] = useState(CANCEL_WINDOW);
   const [toast, setToast] = useState(null);
+  const [showRating, setShowRating] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const ratingShownRef = useRef(false);
+
+  // On mount: check if this alert was already rated so modal never re-opens
+  useEffect(() => {
+    if (!currentAlert?.alert_id) return;
+    AsyncStorage.getItem(RATED_ALERTS_KEY).then((raw) => {
+      const rated = raw ? JSON.parse(raw) : [];
+      if (rated.includes(currentAlert.alert_id)) {
+        ratingShownRef.current = true;
+      }
+    });
+  }, [currentAlert?.alert_id]);
 
   const showToast = (message, type = 'success') => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -188,8 +208,57 @@ const AlertStatusScreen = ({ navigation, route }) => {
     };
   }, [isFocused, isTerminal, alertId]);
 
+  // Show rating modal once when alert is RESOLVED
+  useEffect(() => {
+    if (currentAlert?.status === 'RESOLVED' && !ratingShownRef.current && !ratingSubmitted) {
+      ratingShownRef.current = true;
+      setTimeout(() => setShowRating(true), 800);
+    }
+  }, [currentAlert?.status]);
+
+  const handleRatingSubmit = async () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setRatingSubmitted(true);
+    setShowRating(false);
+    showToast('Thank you for your feedback!', 'success');
+
+    // Persist locally so the modal never re-opens for this alert
+    try {
+      const raw = await AsyncStorage.getItem(RATED_ALERTS_KEY);
+      const rated = raw ? JSON.parse(raw) : [];
+      await AsyncStorage.setItem(
+        RATED_ALERTS_KEY,
+        JSON.stringify([...rated, currentAlert.alert_id])
+      );
+    } catch {
+      // Ignore storage errors — rating is still sent to backend
+    }
+
+    // Fire-and-forget — backend saves the rating
+    dispatch(rateAlert({ alertId: currentAlert.alert_id, rating }));
+  };
+
   const firstAck = currentAlert?.assignments?.[0]?.acknowledgment;
   const canCancel = isCancellable && cancelSecondsLeft > 0;
+
+  // Live ETA countdown
+  const [etaRemaining, setEtaRemaining] = useState(null);
+  useEffect(() => {
+    if (!firstAck?.estimated_arrival || !currentAlert?.created_at || currentAlert.status === 'RESOLVED') {
+      setEtaRemaining(null);
+      return;
+    }
+    const etaSeconds = firstAck.estimated_arrival * 60;
+    const base = new Date(currentAlert.created_at).getTime();
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - base) / 1000);
+      const remaining = Math.max(0, etaSeconds - elapsed);
+      setEtaRemaining(remaining);
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [firstAck?.estimated_arrival, currentAlert?.created_at, currentAlert?.status]);
 
   const handleCancel = () => {
     Alert.alert('Cancel Alert', 'Are you sure you want to cancel this alert?', [
@@ -200,6 +269,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
         onPress: async () => {
           const result = await dispatch(cancelAlert(currentAlert?.alert_id));
           if (cancelAlert.fulfilled.match(result)) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             showToast('Alert cancelled.', 'success');
             setTimeout(goHome, 1200);
           } else {
@@ -256,36 +326,57 @@ const AlertStatusScreen = ({ navigation, route }) => {
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* Map */}
-        <MapView
-          style={styles.map}
-          region={{
-            latitude:       userCoord.latitude,
-            longitude:      userCoord.longitude,
-            latitudeDelta:  0.015,
-            longitudeDelta: 0.015,
-          }}
-          scrollEnabled={false}
-        >
-          <Marker coordinate={userCoord} pinColor={colors.SOS_RED} title="You" />
-          {responderCoord && (
-            <Marker coordinate={responderCoord} pinColor={colors.SUCCESS_GREEN} title="Responder" />
-          )}
-          {responderCoord && (
-            <Polyline
-              coordinates={[userCoord, responderCoord]}
-              strokeColor={colors.PRIMARY_BLUE}
-              strokeWidth={3}
-              lineDashPattern={[6, 3]}
-            />
-          )}
-        </MapView>
+        <View style={styles.mapWrapper}>
+          <MapView
+            style={styles.map}
+            region={{
+              latitude:       userCoord.latitude,
+              longitude:      userCoord.longitude,
+              latitudeDelta:  0.015,
+              longitudeDelta: 0.015,
+            }}
+            scrollEnabled={false}
+            customMapStyle={isDark ? DARK_MAP_STYLE : []}
+            userInterfaceStyle={isDark ? 'dark' : 'light'}
+          >
+            <Marker coordinate={userCoord} pinColor={colors.SOS_RED} title="You" />
+            {responderCoord && (
+              <Marker coordinate={responderCoord} pinColor={colors.SUCCESS_GREEN} title="Responder" />
+            )}
+            {responderCoord && (
+              <Polyline
+                coordinates={[userCoord, responderCoord]}
+                strokeColor={colors.PRIMARY_BLUE}
+                strokeWidth={3}
+                lineDashPattern={[6, 3]}
+              />
+            )}
+          </MapView>
+          {/* Locate-me FAB */}
+          <TouchableOpacity
+            style={[styles.locateMeBtn, { backgroundColor: colors.BACKGROUND_WHITE }]}
+            activeOpacity={0.8}
+            onPress={() => {/* map is already centred on user coord */}}
+          >
+            <Ionicons name="locate" size={18} color={colors.PRIMARY_BLUE} />
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.content}>
           {/* ETA */}
           {firstAck?.estimated_arrival && (
             <View style={styles.etaCard}>
               <Text style={styles.etaLabel}>Estimated Arrival</Text>
-              <Text style={styles.etaValue}>{firstAck.estimated_arrival} min</Text>
+              {etaRemaining !== null ? (
+                <>
+                  <Text style={styles.etaValue}>
+                    {Math.floor(etaRemaining / 60)}:{String(etaRemaining % 60).padStart(2, '0')}
+                  </Text>
+                  <Text style={styles.etaSub}>min remaining</Text>
+                </>
+              ) : (
+                <Text style={styles.etaValue}>{firstAck.estimated_arrival} min</Text>
+              )}
             </View>
           )}
 
@@ -356,6 +447,40 @@ const AlertStatusScreen = ({ navigation, route }) => {
         </View>
       </ScrollView>
 
+      {/* Rating Modal */}
+      <Modal visible={showRating} transparent animationType="slide" onRequestClose={() => setShowRating(false)}>
+        <TouchableOpacity style={ratingModalStyles.overlay} activeOpacity={1} onPress={() => setShowRating(false)}>
+          <TouchableOpacity activeOpacity={1} style={[ratingModalStyles.sheet, { backgroundColor: colors.CARD_WHITE }]}>
+            <View style={[ratingModalStyles.handle, { backgroundColor: colors.BORDER_GREY }]} />
+            <Text style={[ratingModalStyles.title, { color: colors.TEXT_DARK }]}>How was your experience?</Text>
+            <Text style={[ratingModalStyles.sub, { color: colors.TEXT_MEDIUM }]}>
+              Rate the emergency response you received
+            </Text>
+            <View style={ratingModalStyles.stars}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <TouchableOpacity key={star} onPress={() => setRating(star)} activeOpacity={0.7}>
+                  <Ionicons
+                    name={star <= rating ? 'star' : 'star-outline'}
+                    size={40}
+                    color={star <= rating ? '#F59E0B' : colors.BORDER_GREY}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+            <TouchableOpacity
+              style={[ratingModalStyles.submitBtn, { backgroundColor: rating > 0 ? colors.PRIMARY_BLUE : colors.BORDER_GREY }]}
+              onPress={rating > 0 ? handleRatingSubmit : undefined}
+              activeOpacity={0.8}
+            >
+              <Text style={ratingModalStyles.submitText}>Submit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowRating(false)} style={ratingModalStyles.skipBtn}>
+              <Text style={[ratingModalStyles.skipText, { color: colors.TEXT_MEDIUM }]}>Skip</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Toast */}
       <Toast toast={toast} colors={colors} />
     </SafeAreaView>
@@ -405,7 +530,23 @@ const makeStyles = (colors) => StyleSheet.create({
     fontWeight: '700',
     color: colors.ERROR_RED,
   },
-  map: { height: 220 },
+  mapWrapper: { height: 220 },
+  map: { flex: 1 },
+  locateMeBtn: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
+  },
   content: {
     padding: 20,
     gap: 16,
@@ -424,10 +565,18 @@ const makeStyles = (colors) => StyleSheet.create({
     letterSpacing: 0.5,
   },
   etaValue: {
-    fontSize: 32,
+    fontSize: 36,
     fontWeight: '800',
     color: colors.SOS_RED,
     marginTop: 4,
+    letterSpacing: 1,
+  },
+  etaSub: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.SOS_RED,
+    opacity: 0.7,
+    marginTop: 2,
   },
   responderCard: {
     backgroundColor: colors.CARD_WHITE,
@@ -550,6 +699,64 @@ const makeStyles = (colors) => StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: colors.PRIMARY_BLUE,
+  },
+});
+
+const ratingModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingBottom: 40,
+    alignItems: 'center',
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    marginTop: 12,
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  sub: {
+    fontSize: 14,
+    marginBottom: 24,
+    textAlign: 'center',
+    paddingHorizontal: 32,
+  },
+  stars: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 28,
+  },
+  submitBtn: {
+    width: '80%',
+    height: 50,
+    borderRadius: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  submitText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  skipBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 24,
+  },
+  skipText: {
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

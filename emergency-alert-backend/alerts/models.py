@@ -37,6 +37,7 @@ class EmergencyAlert(models.Model):
     priority_level = CharField(max_length=10, choices=PRIORITY_LEVELS, default='CRITICAL')
     description = TextField(blank=True, null=True)
     status = CharField(max_length=15, choices=STATUSES, default='PENDING')
+    rating = IntegerField(null=True, blank=True)  # 1–5 stars, submitted once after resolution
     created_at = DateTimeField(auto_now_add=True)
     updated_at = DateTimeField(auto_now=True)
 

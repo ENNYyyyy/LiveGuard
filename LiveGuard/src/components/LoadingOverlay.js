@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, ActivityIndicator, Text, StyleSheet, Modal } from 'react-native';
-import colors from '../utils/colors';
+import { useTheme } from '../context/ThemeContext';
 
 const LoadingOverlay = ({ visible, message = 'Please wait...' }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <Modal transparent animationType="fade" visible={visible}>
       <View style={styles.overlay}>
@@ -15,7 +18,7 @@ const LoadingOverlay = ({ visible, message = 'Please wait...' }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -23,7 +26,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   card: {
-    backgroundColor: colors.BACKGROUND_WHITE,
+    backgroundColor: colors.CARD_WHITE,
     borderRadius: 20,
     padding: 28,
     alignItems: 'center',

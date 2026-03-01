@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { TouchableOpacity, Text, StyleSheet } from 'react-native';
-import colors from '../utils/colors';
-import typography from '../utils/typography';
+import { useTheme } from '../context/ThemeContext';
 
 const OutlinedButton = ({ title, onPress }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   return (
     <TouchableOpacity
       style={styles.button}
@@ -15,7 +17,7 @@ const OutlinedButton = ({ title, onPress }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   button: {
     height: 56,
     borderRadius: 28,
@@ -27,7 +29,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   label: {
-    ...typography.outlinedButton,
+    fontWeight: '600',
+    fontSize: 18,
+    color: colors.TEXT_DARK,
   },
 });
 

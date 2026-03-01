@@ -1,11 +1,13 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { STORAGE_KEYS } from '../utils/constants';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { Ionicons } from '@expo/vector-icons';
 
-import Colors from '../utils/colors';
+import { useTheme } from '../context/ThemeContext';
 import DrawerContent from '../components/DrawerContent';
 import { loadStoredAuth } from '../store/authSlice';
 
@@ -20,6 +22,8 @@ import AlertStatusScreen from '../screens/alert/AlertStatusScreen';
 import IncidentHistoryScreen from '../screens/history/IncidentHistoryScreen';
 import ProfileScreen from '../screens/profile/ProfileScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
+import EmergencyContactsScreen from '../screens/contacts/EmergencyContactsScreen';
+import OnboardingWalkthrough from '../screens/OnboardingWalkthrough';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -42,18 +46,19 @@ function HomeStack() {
 
 // ─── Bottom Tab Navigator ─────────────────────────────────────────────────────
 function MainTabs() {
+  const { colors } = useTheme();
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: Colors.BACKGROUND_WHITE,
+          backgroundColor: colors.BACKGROUND_WHITE,
           height: 60,
           borderTopWidth: 0.5,
-          borderTopColor: '#E5E7EB',
+          borderTopColor: colors.BORDER_GREY,
         },
-        tabBarActiveTintColor: Colors.TAB_ACTIVE,
-        tabBarInactiveTintColor: Colors.TAB_INACTIVE,
+        tabBarActiveTintColor: colors.TAB_ACTIVE,
+        tabBarInactiveTintColor: colors.TAB_INACTIVE,
         tabBarLabelStyle: { fontSize: 12 },
       }}
     >
@@ -93,13 +98,14 @@ function MainTabs() {
 
 // ─── Drawer Navigator ─────────────────────────────────────────────────────────
 function MainDrawer() {
+  const { colors } = useTheme();
   return (
     <Drawer.Navigator
       drawerContent={(props) => <DrawerContent {...props} />}
       screenOptions={{
         headerShown: false,
         drawerStyle: {
-          backgroundColor: Colors.BACKGROUND_LIGHT,
+          backgroundColor: colors.BACKGROUND_LIGHT,
           width: '80%',
         },
       }}
@@ -113,9 +119,13 @@ function MainDrawer() {
 export default function AppNavigator() {
   const dispatch = useDispatch();
   const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
+  const [onboardingSeen, setOnboardingSeen] = useState(null);
 
   useEffect(() => {
     dispatch(loadStoredAuth());
+    AsyncStorage.getItem(STORAGE_KEYS.ONBOARDING_SEEN).then((val) => {
+      setOnboardingSeen(val === 'true');
+    });
   }, []);
 
   return (
@@ -124,14 +134,16 @@ export default function AppNavigator() {
       screenOptions={{ headerShown: false }}
     >
       <Stack.Screen name="SplashScreen">
-        {(props) => <SplashScreen {...props} isAuthenticated={isAuthenticated} />}
+        {(props) => <SplashScreen {...props} isAuthenticated={isAuthenticated} onboardingSeen={onboardingSeen} />}
       </Stack.Screen>
+      <Stack.Screen name="OnboardingWalkthrough" component={OnboardingWalkthrough} />
       <Stack.Screen name="OnboardingScreen" component={OnboardingScreen} />
       <Stack.Screen name="LoginScreen" component={LoginScreen} />
       <Stack.Screen name="RegisterScreen" component={RegisterScreen} />
       <Stack.Screen name="MainDrawer" component={MainDrawer} />
       <Stack.Screen name="AlertStatusScreen" component={AlertStatusScreen} />
       <Stack.Screen name="SettingsScreen" component={SettingsScreen} />
+      <Stack.Screen name="EmergencyContactsScreen" component={EmergencyContactsScreen} />
     </Stack.Navigator>
   );
 }

@@ -228,6 +228,27 @@ class UpdateAlertLocationView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class RateAlertView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, alert_id):
+        try:
+            alert = EmergencyAlert.objects.get(alert_id=alert_id, user=request.user)
+        except EmergencyAlert.DoesNotExist:
+            return Response({'error': 'Alert not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        rating = request.data.get('rating')
+        if not isinstance(rating, int) or rating not in range(1, 6):
+            return Response({'error': 'rating must be an integer between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if alert.rating is not None:
+            return Response({'error': 'Already rated.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        alert.rating = rating
+        alert.save(update_fields=['rating'])
+        return Response({'rating': rating}, status=status.HTTP_200_OK)
+
+
 class CancelAlertView(APIView):
     permission_classes = [IsAuthenticated]
 

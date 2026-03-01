@@ -21,6 +21,15 @@ const PAGE_TITLES = {
   '/settings':      'Settings',
 };
 
+function getRoleLabel(user) {
+  if (user?.role === 'ADMIN') {
+    if (user?.admin_level === 'SUPER_ADMIN') return 'Super Admin';
+    return 'System Admin';
+  }
+  if (user?.role === 'AGENCY') return user?.agency_role || 'Agency Officer';
+  return 'Civilian';
+}
+
 const ShellLayout = ({ children }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -61,7 +70,7 @@ const ShellLayout = ({ children }) => {
               {user?.full_name || user?.email || 'Admin'}
             </div>
             <div className="sidebar-footer-role">
-              {user?.role || 'System Admin'}
+              {getRoleLabel(user)}
             </div>
           </div>
           <button

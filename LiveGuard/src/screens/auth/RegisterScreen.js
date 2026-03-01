@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,12 +17,13 @@ import PhoneInput from '../../components/PhoneInput';
 import PrimaryButton from '../../components/PrimaryButton';
 import PasswordStrengthBar from '../../components/PasswordStrengthBar';
 import SocialAuthButtons from '../../components/SocialAuthButtons';
-import colors from '../../utils/colors';
-import typography from '../../utils/typography';
+import { useTheme } from '../../context/ThemeContext';
 
 const RegisterScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const { loading, error, isAuthenticated } = useSelector((state) => state.auth);
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
@@ -44,10 +45,7 @@ const RegisterScreen = ({ navigation }) => {
   }, [isAuthenticated]);
 
   const handlePostRegister = async () => {
-    // 1. Location permission
     await requestLocationPermission();
-
-    // 2. Notification permission + SMS warning
     Alert.alert(
       'LiveGuard',
       'Your carrier may charge for SMS messages used to receive emergency alert.',
@@ -56,10 +54,8 @@ const RegisterScreen = ({ navigation }) => {
         {
           text: 'OK',
           onPress: async () => {
-            // 3. Push token → register device
             const token = await registerForPushNotifications();
             if (token) dispatch(registerDevice(token));
-            // 4. Navigate
             navigation.replace('MainDrawer');
           },
         },
@@ -113,7 +109,7 @@ const RegisterScreen = ({ navigation }) => {
 
   return (
     <View style={styles.flex}>
-      {/* Decorative pink circle */}
+      {/* Decorative circle */}
       <View style={[styles.decorCircle, { pointerEvents: 'none' }]} />
 
       <ScrollView
@@ -126,6 +122,16 @@ const RegisterScreen = ({ navigation }) => {
         <View style={styles.logoRow}>
           <LogoHeader size="small" />
         </View>
+
+        <View style={styles.gap24} />
+
+        {/* Step indicator */}
+        <View style={styles.stepRow}>
+          <View style={[styles.stepDot, styles.stepDotActive]} />
+          <View style={[styles.stepLine, step === 2 && styles.stepLineActive]} />
+          <View style={[styles.stepDot, step === 2 && styles.stepDotActive]} />
+        </View>
+        <Text style={styles.stepLabel}>Step {step} of 2</Text>
 
         <View style={styles.gap24} />
 
@@ -220,7 +226,7 @@ const RegisterScreen = ({ navigation }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   flex: {
     flex: 1,
     backgroundColor: colors.BACKGROUND_WHITE,
@@ -244,15 +250,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   title: {
-    ...typography.screenTitle,
+    fontWeight: '700',
+    fontSize: 28,
+    color: colors.TEXT_DARK,
     textAlign: 'center',
   },
   subtitle: {
-    ...typography.screenSubtitle,
+    fontWeight: '400',
+    fontSize: 16,
+    color: colors.TEXT_MEDIUM,
     textAlign: 'center',
   },
   backendError: {
-    ...typography.errorText,
+    fontSize: 13,
+    color: colors.ERROR_RED,
     textAlign: 'center',
     marginBottom: 12,
   },
@@ -266,7 +277,9 @@ const styles = StyleSheet.create({
     color: colors.TEXT_MEDIUM,
   },
   signinLink: {
-    ...typography.link,
+    fontWeight: '600',
+    fontSize: 14,
+    color: colors.LINK_BLUE,
   },
   terms: {
     fontSize: 13,
@@ -277,6 +290,35 @@ const styles = StyleSheet.create({
   termsLink: {
     color: colors.LINK_BLUE,
     fontWeight: '600',
+  },
+  stepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.BORDER_GREY,
+  },
+  stepDotActive: {
+    backgroundColor: colors.PRIMARY_BLUE,
+  },
+  stepLine: {
+    width: 60,
+    height: 2,
+    backgroundColor: colors.BORDER_GREY,
+    marginHorizontal: 8,
+  },
+  stepLineActive: {
+    backgroundColor: colors.PRIMARY_BLUE,
+  },
+  stepLabel: {
+    fontSize: 13,
+    color: colors.TEXT_MEDIUM,
+    textAlign: 'center',
+    marginTop: 8,
   },
   gap16: { height: 16 },
   gap24: { height: 24 },

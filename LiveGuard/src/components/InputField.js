@@ -1,7 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Pressable, StyleSheet } from 'react-native';
-import colors from '../utils/colors';
-import typography from '../utils/typography';
+import { useTheme } from '../context/ThemeContext';
 
 const InputField = ({
   label,
@@ -22,6 +21,8 @@ const InputField = ({
 }) => {
   const [focused, setFocused] = useState(false);
   const inputRef = useRef(null);
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   return (
     <View style={[styles.wrapper, style]}>
@@ -67,12 +68,14 @@ const InputField = ({
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   wrapper: {
     marginBottom: 16,
   },
   label: {
-    ...typography.fieldLabel,
+    fontWeight: '600',
+    fontSize: 14,
+    color: colors.LABEL_DARK,
     marginBottom: 6,
   },
   inputContainer: {

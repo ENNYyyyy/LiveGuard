@@ -1,21 +1,31 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import * as ExpoSplashScreen from 'expo-splash-screen';
 import LogoHeader from '../components/LogoHeader';
-import colors from '../utils/colors';
+import { useTheme } from '../context/ThemeContext';
 
 // Prevent native splash from auto-hiding until JS splash takes over
 ExpoSplashScreen.preventAutoHideAsync();
 
-const SplashScreen = ({ navigation, isAuthenticated }) => {
+const SplashScreen = ({ navigation, isAuthenticated, onboardingSeen }) => {
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+
   useEffect(() => {
+    if (onboardingSeen === null) return; // wait for AsyncStorage read
     const init = async () => {
-      await ExpoSplashScreen.hideAsync(); // hand off from native → JS splash
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      navigation.replace(isAuthenticated ? 'MainDrawer' : 'OnboardingScreen');
+      await ExpoSplashScreen.hideAsync();
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+      if (isAuthenticated) {
+        navigation.replace('MainDrawer');
+      } else if (!onboardingSeen) {
+        navigation.replace('OnboardingWalkthrough');
+      } else {
+        navigation.replace('OnboardingScreen');
+      }
     };
     init();
-  }, []);
+  }, [onboardingSeen]);
 
   return (
     <View style={styles.container}>
@@ -24,7 +34,7 @@ const SplashScreen = ({ navigation, isAuthenticated }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.BACKGROUND_WHITE,

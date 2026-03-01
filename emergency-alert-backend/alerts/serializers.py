@@ -110,9 +110,9 @@ class EmergencyAlertDetailSerializer(serializers.ModelSerializer):
         model = EmergencyAlert
         fields = [
             'alert_id', 'alert_type', 'priority_level', 'description',
-            'status', 'created_at', 'updated_at', 'location', 'assignments',
+            'status', 'rating', 'created_at', 'updated_at', 'location', 'assignments',
         ]
-        read_only_fields = ['alert_id', 'status', 'created_at', 'updated_at']
+        read_only_fields = ['alert_id', 'status', 'rating', 'created_at', 'updated_at']
 
 
 class EmergencyAlertListSerializer(serializers.ModelSerializer):
@@ -120,5 +120,5 @@ class EmergencyAlertListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmergencyAlert
-        fields = ['alert_id', 'alert_type', 'priority_level', 'status', 'created_at', 'location']
-        read_only_fields = ['alert_id', 'status', 'created_at']
+        fields = ['alert_id', 'alert_type', 'priority_level', 'status', 'rating', 'created_at', 'location']
+        read_only_fields = ['alert_id', 'status', 'rating', 'created_at']

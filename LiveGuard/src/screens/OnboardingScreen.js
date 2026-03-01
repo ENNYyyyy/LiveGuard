@@ -1,33 +1,41 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, Image, StyleSheet, Dimensions } from 'react-native';
+import { useSelector } from 'react-redux';
+import PrimaryButton from '../components/PrimaryButton';
+import OutlinedButton from '../components/OutlinedButton';
+import { useTheme } from '../context/ThemeContext';
 
 const IllustrationPlaceholder = () => {
   const [error, setError] = useState(false);
   if (error) {
     return (
-      <View style={styles.placeholder}>
-        <Text style={styles.placeholderIcon}>🚑</Text>
+      <View style={illustrationStyles.placeholder}>
+        <Text style={illustrationStyles.placeholderIcon}>🚑</Text>
       </View>
     );
   }
   return (
     <Image
       source={require('../../assets/images/onboarding-ambulance.png')}
-      style={styles.illustration}
+      style={illustrationStyles.illustration}
       resizeMode="contain"
       onError={() => setError(true)}
     />
   );
 };
-import { useSelector } from 'react-redux';
-import PrimaryButton from '../components/PrimaryButton';
-import OutlinedButton from '../components/OutlinedButton';
-import colors from '../utils/colors';
+
+const illustrationStyles = StyleSheet.create({
+  placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  placeholderIcon: { fontSize: 80 },
+  illustration: { width: '100%', height: '100%' },
+});
 
 const { height } = Dimensions.get('window');
 
 const OnboardingScreen = ({ navigation }) => {
   const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   useEffect(() => {
     if (isAuthenticated) navigation.replace('MainDrawer');
@@ -40,14 +48,12 @@ const OnboardingScreen = ({ navigation }) => {
         <IllustrationPlaceholder />
       </View>
 
-      {/* Bottom — white area with text + buttons */}
+      {/* Bottom — area with text + buttons */}
       <View style={styles.bottom}>
         <Text style={styles.title}>Emergency Help Needed?</Text>
-
         <Text style={styles.subtitle}>
           Because every second counts. One tap to alert the right person, right when you need them.
         </Text>
-
         <View style={styles.buttons}>
           <PrimaryButton title="Login"    onPress={() => navigation.navigate('LoginScreen')} />
           <View style={styles.gap} />
@@ -58,7 +64,7 @@ const OnboardingScreen = ({ navigation }) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.BACKGROUND_WHITE,
@@ -68,18 +74,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.BACKGROUND_CREAM,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  illustration: {
-    width: '100%',
-    height: '100%',
-  },
-  placeholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  placeholderIcon: {
-    fontSize: 80,
   },
   bottom: {
     flex: 1,
@@ -108,9 +102,7 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 32,
   },
-  gap: {
-    height: 12,
-  },
+  gap: { height: 12 },
 });
 
 export default OnboardingScreen;

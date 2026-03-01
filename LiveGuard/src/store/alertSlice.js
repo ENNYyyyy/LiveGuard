@@ -64,6 +64,18 @@ export const cancelAlert = createAsyncThunk(
   }
 );
 
+export const rateAlert = createAsyncThunk(
+  'alert/rate',
+  async ({ alertId, rating }, { rejectWithValue }) => {
+    try {
+      await api.patch(`/api/alerts/${alertId}/rate/`, { rating });
+      return { alertId, rating };
+    } catch (err) {
+      return rejectWithValue('Failed to submit rating');
+    }
+  }
+);
+
 export const updateAlertLocation = createAsyncThunk(
   'alert/updateLocation',
   async ({ alertId, latitude, longitude, accuracy }, { rejectWithValue }) => {

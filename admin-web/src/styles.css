@@ -364,16 +364,23 @@ button, input, textarea, select { font: inherit; color: inherit; }
   background: none;
   border: 1px solid var(--border-light);
   border-radius: var(--radius-sm);
-  padding: 5px 8px;
-  font-size: 11px;
-  font-weight: 600;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
   color: var(--text-2);
   cursor: pointer;
   flex-shrink: 0;
-  transition: border-color 0.15s, color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.sidebar-footer-logout:hover { border-color: var(--error); color: #ff7070; }
+.sidebar-footer-logout:hover {
+  background: var(--error-dim);
+  border-color: var(--error);
+  color: var(--error);
+}
 
 /* ── Admin body / topbar / main ──────────────────────────────────────────── */
 .admin-body {
