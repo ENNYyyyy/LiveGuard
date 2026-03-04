@@ -8,7 +8,6 @@ import {
   Alert,
   Modal,
   ActivityIndicator,
-  Animated,
   Linking,
   Platform,
 } from 'react-native';
@@ -16,15 +15,15 @@ import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch, useSelector } from 'react-redux';
-import { createEmergencyAlert, fetchAlertHistory } from '../../store/alertSlice';
-import { getFullLocationData } from '../../services/locationService';
+import { createEmergencyAlert, fetchAlertHistory, fetchPriorityQuestions } from '../../store/alertSlice';
+import { getCurrentPosition } from '../../services/locationService';
 import ChipSelector from '../../components/ChipSelector';
 import PrimaryButton from '../../components/PrimaryButton';
 import LoadingOverlay from '../../components/LoadingOverlay';
 import NoInternetBanner from '../../components/NoInternetBanner';
 import useNetInfo from '../../hooks/useNetInfo';
 import { useTheme } from '../../context/ThemeContext';
-import { EMERGENCY_TYPES, PRIORITY_LEVELS } from '../../utils/constants';
+import { EMERGENCY_TYPES } from '../../utils/constants';
 import { getContacts } from '../../services/contactsService';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -33,28 +32,31 @@ const PENDING_ALERT_KEY = 'PENDING_ALERT';
 const EmergencyAlertScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const submitError = useSelector((state) => state.alert.submitError);
+  const priorityQuestions = useSelector((state) => state.alert.priorityQuestions);
+  const questionsLoading = useSelector((state) => state.alert.questionsLoading);
+  const questionsError = useSelector((state) => state.alert.questionsError);
   const { isConnected } = useNetInfo();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [selectedType, setSelectedType] = useState(null);
-  const [selectedPriority, setSelectedPriority] = useState(null);
   const [errors, setErrors] = useState({});
+  const [questionErrors, setQuestionErrors] = useState({});
+  const [riskAnswers, setRiskAnswers] = useState({});
   const [loading, setLoading] = useState(false);
   const [hasPendingAlert, setHasPendingAlert] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [createdAlertId, setCreatedAlertId] = useState(null);
   const [emergencyContacts, setEmergencyContacts] = useState([]);
+  const [latestAlertMeta, setLatestAlertMeta] = useState(null);
 
-  // SOS countdown state
-  const [showCountdown, setShowCountdown] = useState(false);
-  const [countdownVal, setCountdownVal] = useState(3);
-  const countdownRef = useRef(null);
-
-  // Success notification state
-  const [showSuccess, setShowSuccess] = useState(false);
-  const successAlertIdRef = useRef(null);
-  const locationAddressRef = useRef('');
-  const scaleAnim = useRef(new Animated.Value(0.7)).current;
-  const opacityAnim = useRef(new Animated.Value(0)).current;
+  const lastSelectedTypeRef = useRef(null);
+  // Start fetching location immediately on mount so it's ready (or nearly ready)
+  // by the time the user finishes filling the form and taps submit.
+  const locationPrefetchRef = useRef(null);
+  useEffect(() => {
+    locationPrefetchRef.current = getCurrentPosition().catch(() => null);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -64,93 +66,133 @@ const EmergencyAlertScreen = ({ navigation }) => {
           const pending = JSON.parse(raw);
           setHasPendingAlert(true);
           if (pending.alert_type) setSelectedType(pending.alert_type);
-          if (pending.priority_level) setSelectedPriority(pending.priority_level);
+          if (pending.risk_answers && typeof pending.risk_answers === 'object') {
+            setRiskAnswers(pending.risk_answers);
+          }
         }
       } catch {
         // Ignore read errors
       }
       const contacts = await getContacts();
-      setEmergencyContacts(contacts);
+      setEmergencyContacts(Array.isArray(contacts) ? contacts : []);
     })();
   }, []);
 
+  useEffect(() => {
+    if (!selectedType) {
+      setRiskAnswers({});
+      setQuestionErrors({});
+      lastSelectedTypeRef.current = null;
+      return;
+    }
+
+    if (lastSelectedTypeRef.current && lastSelectedTypeRef.current !== selectedType) {
+      setRiskAnswers({});
+      setQuestionErrors({});
+    }
+    lastSelectedTypeRef.current = selectedType;
+    dispatch(fetchPriorityQuestions(selectedType));
+  }, [dispatch, selectedType]);
+
   const validate = () => {
-    const e = {};
-    if (!selectedType)     e.type     = 'Please select an emergency type';
-    if (!selectedPriority) e.priority = 'Please select a priority level';
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  };
+    const formErrors = {};
+    const answerErrors = {};
 
-  const startCountdown = () => {
-    if (!validate()) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    setCountdownVal(3);
-    setShowCountdown(true);
-    let val = 3;
-    countdownRef.current = setInterval(() => {
-      val -= 1;
-      if (val <= 0) {
-        clearInterval(countdownRef.current);
-        setShowCountdown(false);
-        sendAlert();
-      } else {
-        setCountdownVal(val);
+    if (!selectedType) {
+      formErrors.type = 'Please select an emergency type';
+    }
+    if (selectedType && questionsLoading) {
+      formErrors.questions = 'Please wait while risk questions load.';
+    }
+    if (selectedType && !questionsLoading && priorityQuestions.length === 0) {
+      formErrors.questions = 'Risk questions are required before sending this alert.';
+    }
+    if (questionsError) {
+      formErrors.questions = 'Unable to load risk questions. Retry to continue.';
+    }
+
+    priorityQuestions.forEach((question) => {
+      const answer = riskAnswers[question.id];
+      const missing =
+        answer === undefined ||
+        answer === null ||
+        (typeof answer === 'string' && answer.trim() === '');
+
+      if (question.required && missing) {
+        answerErrors[question.id] = 'This answer is required.';
       }
-    }, 1000);
+    });
+
+    setErrors(formErrors);
+    setQuestionErrors(answerErrors);
+    return Object.keys(formErrors).length === 0 && Object.keys(answerErrors).length === 0;
   };
 
-  const cancelCountdown = () => {
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    setShowCountdown(false);
+  const updateRiskAnswer = (questionId, value) => {
+    setRiskAnswers((prev) => ({ ...prev, [questionId]: value }));
+    setQuestionErrors((prev) => {
+      if (!prev[questionId]) return prev;
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
   };
 
-  // Clean up countdown on unmount
-  useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
+  const buildRiskAnswersPayload = () => {
+    const payload = {};
+    priorityQuestions.forEach((question) => {
+      const value = riskAnswers[question.id];
+      if (value === undefined || value === null || value === '') {
+        return;
+      }
+      payload[question.id] = value;
+    });
+    return payload;
+  };
+
+  const handleSubmit = () => {
+    if (validate()) sendAlert();
+  };
 
   const sendAlert = async () => {
     setLoading(true);
     try {
-      const locationData = await getFullLocationData();
-      locationAddressRef.current = locationData.address || '';
+      // Await the prefetch that started on mount — if it already resolved this is instant.
+      // If it failed (null), fall back to a fresh fetch now.
+      const locationData =
+        (locationPrefetchRef.current && (await locationPrefetchRef.current)) ||
+        (await getCurrentPosition());
 
       const alertPayload = {
-        alert_type:     selectedType,
-        priority_level: selectedPriority,
-        latitude:       parseFloat(locationData.latitude.toFixed(7)),
-        longitude:      parseFloat(locationData.longitude.toFixed(7)),
-        accuracy:       locationData.accuracy,
+        alert_type: selectedType,
+        risk_answers: buildRiskAnswersPayload(),
+        latitude: parseFloat(locationData.latitude.toFixed(7)),
+        longitude: parseFloat(locationData.longitude.toFixed(7)),
+        accuracy: locationData.accuracy,
       };
 
       const result = await dispatch(createEmergencyAlert(alertPayload));
 
       if (createEmergencyAlert.fulfilled.match(result)) {
-        const createdAlertId = result.payload?.alert_id;
-        successAlertIdRef.current = createdAlertId;
-        setHasPendingAlert(false);
-        setLoading(false);
-
-        // Haptic + success notification
+        const newAlertId = result.payload?.alert_id;
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setShowSuccess(true);
-        Animated.parallel([
-          Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, friction: 6 }),
-          Animated.timing(opacityAnim, { toValue: 1, duration: 250, useNativeDriver: true }),
-        ]).start();
-
-        dispatch(fetchAlertHistory());
         AsyncStorage.removeItem(PENDING_ALERT_KEY).catch(() => {});
-
-        // After 2.5 seconds, navigate to AlertStatusScreen
-        setTimeout(() => {
-          setShowSuccess(false);
-          navigation.navigate('AlertStatusScreen', { alert_id: createdAlertId });
-        }, 2500);
-
-        return; // skip finally setLoading
+        dispatch(fetchAlertHistory());
+        setHasPendingAlert(false);
+        if (!newAlertId) {
+          navigation.replace('AlertStatusScreen');
+          return;
+        }
+        setCreatedAlertId(newAlertId);
+        setLatestAlertMeta({
+          alertType: selectedType,
+          latitude: alertPayload.latitude,
+          longitude: alertPayload.longitude,
+        });
+        setShowSuccessModal(true);
       } else {
         await AsyncStorage.setItem(PENDING_ALERT_KEY, JSON.stringify(alertPayload));
-        setHasPendingAlert(false);
+        setHasPendingAlert(true);
       }
     } catch (err) {
       const msg = err?.message || 'Unable to get location. Please try again.';
@@ -158,7 +200,7 @@ const EmergencyAlertScreen = ({ navigation }) => {
       try {
         await AsyncStorage.setItem(
           PENDING_ALERT_KEY,
-          JSON.stringify({ alert_type: selectedType, priority_level: selectedPriority })
+          JSON.stringify({ alert_type: selectedType, risk_answers: buildRiskAnswersPayload() })
         );
       } catch {
         // Ignore write errors
@@ -168,30 +210,111 @@ const EmergencyAlertScreen = ({ navigation }) => {
     }
   };
 
-  const handleNotifyContacts = async () => {
-    if (emergencyContacts.length === 0) return;
-    const phones = emergencyContacts.map(c => c.phone).join(',');
-    const typeLabel = (selectedType || 'Emergency').replace(/_/g, ' ');
-    const address = locationAddressRef.current;
-    const message =
-      `🚨 SOS ALERT via LiveGuard!\nEmergency: ${typeLabel}.` +
-      (address ? `\nLocation: ${address}.` : '') +
-      `\nPlease check on me immediately.`;
-    const encoded = encodeURIComponent(message);
-    const url =
-      Platform.OS === 'ios'
-        ? `sms:${phones}&body=${encoded}`
-        : `sms:?addresses=${phones}&body=${encoded}`;
-    try {
-      await Linking.openURL(url);
-    } catch {
-      // silently fail — do not disrupt the alert flow
-    }
-  };
-
   const handleDismissPending = async () => {
     await AsyncStorage.removeItem(PENDING_ALERT_KEY);
     setHasPendingAlert(false);
+  };
+
+  const handleTypeSelect = (type) => {
+    setSelectedType(type);
+    setErrors((prev) => ({ ...prev, type: null, questions: null }));
+  };
+
+  const handleContinueToStatus = () => {
+    if (!createdAlertId) return;
+    setShowSuccessModal(false);
+    navigation.replace('AlertStatusScreen', { alert_id: createdAlertId });
+  };
+
+  const handleNotifyContacts = async () => {
+    if (emergencyContacts.length === 0) {
+      Alert.alert('No Contacts', 'No emergency contacts found. Add contacts first.');
+      return;
+    }
+
+    const phones = emergencyContacts
+      .map((contact) => contact?.phone)
+      .filter(Boolean);
+    if (phones.length === 0) {
+      Alert.alert('No Contacts', 'No valid contact phone numbers were found.');
+      return;
+    }
+
+    const typeLabel = (latestAlertMeta?.alertType || selectedType || 'Emergency').replace(/_/g, ' ');
+    const mapsUrl =
+      latestAlertMeta?.latitude != null && latestAlertMeta?.longitude != null
+        ? `https://maps.google.com/?q=${latestAlertMeta.latitude},${latestAlertMeta.longitude}`
+        : '';
+
+    const message =
+      `SOS alert via LiveGuard.\nEmergency: ${typeLabel}.` +
+      (mapsUrl ? `\nLocation: ${mapsUrl}` : '') +
+      '\nPlease check on me immediately.';
+    const encoded = encodeURIComponent(message);
+
+    const phoneList = phones.join(',');
+    const smsUrl =
+      Platform.OS === 'ios'
+        ? `sms:${phoneList}&body=${encoded}`
+        : `sms:?addresses=${phoneList}&body=${encoded}`;
+
+    try {
+      await Linking.openURL(smsUrl);
+    } catch {
+      Alert.alert('Unable to Open SMS', 'Please try again or notify contacts manually.');
+    }
+  };
+
+  const renderQuestionInput = (question) => {
+    const answer = riskAnswers[question.id];
+
+    if (question.type === 'boolean') {
+      const options = [
+        { key: true, label: 'Yes' },
+        { key: false, label: 'No' },
+      ];
+      return (
+        <View style={styles.answerChips}>
+          {options.map((option) => {
+            const active = answer === option.key;
+            return (
+              <TouchableOpacity
+                key={option.label}
+                style={[styles.answerChip, active && styles.answerChipActive]}
+                onPress={() => updateRiskAnswer(question.id, option.key)}
+              >
+                <Text style={[styles.answerChipText, active && styles.answerChipTextActive]}>
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      );
+    }
+
+    if (question.type === 'single_select') {
+      return (
+        <View style={styles.answerChips}>
+          {question.options.map((option) => {
+            const active = answer === option.value;
+            return (
+              <TouchableOpacity
+                key={option.value}
+                style={[styles.answerChip, active && styles.answerChipActive]}
+                onPress={() => updateRiskAnswer(question.id, option.value)}
+              >
+                <Text style={[styles.answerChipText, active && styles.answerChipTextActive]}>
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      );
+    }
+
+    return null;
   };
 
   return (
@@ -232,7 +355,7 @@ const EmergencyAlertScreen = ({ navigation }) => {
           <View style={styles.errorCard}>
             <Text style={styles.errorCardTitle}>Alert Failed</Text>
             <Text style={styles.errorCardMsg}>{submitError}</Text>
-            <TouchableOpacity style={styles.errorRetryBtn} onPress={startCountdown} disabled={loading}>
+            <TouchableOpacity style={styles.errorRetryBtn} onPress={handleSubmit} disabled={loading}>
               <Text style={styles.errorRetryBtnText}>Retry</Text>
             </TouchableOpacity>
           </View>
@@ -243,22 +366,57 @@ const EmergencyAlertScreen = ({ navigation }) => {
           label="Emergency Type"
           options={EMERGENCY_TYPES}
           selectedKey={selectedType}
-          onSelect={setSelectedType}
+          onSelect={handleTypeSelect}
           required
         />
         {errors.type ? <Text style={styles.errorText}>{errors.type}</Text> : null}
 
         <View style={styles.gap20} />
 
-        {/* Priority Level */}
-        <ChipSelector
-          label="Priority Level"
-          options={PRIORITY_LEVELS}
-          selectedKey={selectedPriority}
-          onSelect={setSelectedPriority}
-          required
-        />
-        {errors.priority ? <Text style={styles.errorText}>{errors.priority}</Text> : null}
+        {selectedType && (
+          <View>
+            <View style={styles.questionsHeader}>
+              <Text style={styles.questionsHeaderTitle}>Risk Assessment Questions</Text>
+              <Text style={styles.questionsHeaderSub}>
+                Your answers are used to compute priority automatically.
+              </Text>
+            </View>
+
+            {questionsLoading ? (
+              <View style={styles.questionsLoadingWrap}>
+                <ActivityIndicator size="small" color={colors.PRIMARY_BLUE} />
+                <Text style={styles.questionsLoadingText}>Loading questions...</Text>
+              </View>
+            ) : questionsError ? (
+              <View style={styles.questionErrorCard}>
+                <Text style={styles.errorCardTitle}>Unable to load questions</Text>
+                <Text style={styles.errorCardMsg}>{questionsError}</Text>
+                <TouchableOpacity
+                  style={styles.errorRetryBtn}
+                  onPress={() => dispatch(fetchPriorityQuestions(selectedType))}
+                >
+                  <Text style={styles.errorRetryBtnText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.questionsList}>
+                {priorityQuestions.map((question) => (
+                  <View key={question.id} style={styles.questionCard}>
+                    <Text style={styles.questionLabel}>
+                      {question.label}
+                      {question.required ? <Text style={styles.requiredMark}> *</Text> : null}
+                    </Text>
+                    {renderQuestionInput(question)}
+                    {questionErrors[question.id] ? (
+                      <Text style={styles.errorText}>{questionErrors[question.id]}</Text>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+        {errors.questions ? <Text style={styles.errorText}>{errors.questions}</Text> : null}
 
         <View style={styles.gap32} />
 
@@ -276,7 +434,7 @@ const EmergencyAlertScreen = ({ navigation }) => {
 
         <PrimaryButton
           title="Confirm Emergency Alert"
-          onPress={startCountdown}
+          onPress={handleSubmit}
           loading={loading}
         />
 
@@ -285,50 +443,37 @@ const EmergencyAlertScreen = ({ navigation }) => {
         </TouchableOpacity>
       </ScrollView>
 
-      {/* SOS Countdown Modal */}
-      <Modal visible={showCountdown} transparent animationType="fade">
+      <Modal visible={showSuccessModal} transparent animationType="fade" onRequestClose={handleContinueToStatus}>
         <View style={styles.successOverlay}>
-          <View style={styles.countdownCard}>
-            <Ionicons name="warning" size={40} color={colors.SOS_RED} style={{ marginBottom: 12 }} />
-            <Text style={styles.countdownTitle}>Sending SOS in…</Text>
-            <Text style={styles.countdownNumber}>{countdownVal}</Text>
-            <TouchableOpacity style={styles.countdownCancelBtn} onPress={cancelCountdown}>
-              <Text style={styles.countdownCancelText}>Cancel</Text>
+          <View style={styles.successCard}>
+            <Ionicons name="checkmark-circle" size={60} color={colors.SUCCESS_GREEN} />
+            <Text style={styles.successTitle}>Alert Sent Successfully</Text>
+            <Text style={styles.successText}>
+              Your emergency alert has been received. You can notify your emergency contacts now.
+            </Text>
+
+            {emergencyContacts.length > 0 ? (
+              <TouchableOpacity style={styles.notifyContactsBtn} onPress={handleNotifyContacts}>
+                <Ionicons name="chatbubble-ellipses-outline" size={16} color={colors.PRIMARY_BLUE} />
+                <Text style={styles.notifyContactsText}>
+                  Notify {emergencyContacts.length} Contact{emergencyContacts.length > 1 ? 's' : ''}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.noContactsText}>No emergency contacts saved.</Text>
+            )}
+
+            <TouchableOpacity
+              style={styles.continueStatusBtn}
+              onPress={handleContinueToStatus}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.continueStatusBtnText} numberOfLines={1}>
+                Continue to Alert Status
+              </Text>
+              <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
-
-      {/* Alert Sent Success overlay — shown on THIS screen before navigating */}
-      <Modal visible={showSuccess} transparent animationType="none">
-        <View style={styles.successOverlay}>
-          <Animated.View
-            style={[
-              styles.successCard,
-              { opacity: opacityAnim, transform: [{ scale: scaleAnim }] },
-            ]}
-          >
-            <Ionicons name="checkmark-circle" size={60} color="#16A34A" style={styles.successIcon} />
-            <Text style={styles.successTitle}>Alert Sent!</Text>
-            <Text style={styles.successSub}>
-              Your emergency alert has been received.{'\n'}Connecting you to emergency services…
-            </Text>
-            {emergencyContacts.length > 0 && (
-              <TouchableOpacity
-                style={styles.notifyBtn}
-                onPress={handleNotifyContacts}
-                activeOpacity={0.8}
-              >
-                <View style={styles.notifyBtnInner}>
-                  <Ionicons name="phone-portrait-outline" size={16} color={colors.PRIMARY_BLUE} />
-                  <Text style={styles.notifyBtnText}>
-                    Notify {emergencyContacts.length} emergency contact{emergencyContacts.length > 1 ? 's' : ''}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            )}
-            <ActivityIndicator color={colors.PRIMARY_BLUE} size="small" style={styles.successSpinner} />
-          </Animated.View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -439,6 +584,149 @@ const makeStyles = (colors) => StyleSheet.create({
     color: colors.ERROR_RED,
     marginTop: 4,
   },
+  questionsHeader: {
+    marginBottom: 12,
+  },
+  questionsHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.PRIMARY_BLUE,
+  },
+  questionsHeaderSub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: colors.TEXT_MEDIUM,
+  },
+  questionsLoadingWrap: {
+    paddingVertical: 18,
+    alignItems: 'center',
+    gap: 8,
+  },
+  questionsLoadingText: {
+    fontSize: 13,
+    color: colors.TEXT_MEDIUM,
+  },
+  questionErrorCard: {
+    backgroundColor: colors.ERROR_CARD_BG,
+    borderWidth: 1,
+    borderColor: colors.ERROR_CARD_BORDER,
+    borderRadius: 12,
+    padding: 14,
+    gap: 8,
+  },
+  questionsList: {
+    gap: 12,
+  },
+  questionCard: {
+    borderWidth: 1,
+    borderColor: colors.BORDER_GREY,
+    borderRadius: 12,
+    backgroundColor: colors.BACKGROUND_WHITE,
+    padding: 12,
+    gap: 8,
+  },
+  questionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.TEXT_DARK,
+    lineHeight: 20,
+  },
+  requiredMark: {
+    color: colors.ACCENT_RED,
+  },
+  answerChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  answerChip: {
+    borderWidth: 1.5,
+    borderColor: colors.BORDER_GREY,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: colors.BACKGROUND_WHITE,
+  },
+  answerChipActive: {
+    borderColor: colors.PRIMARY_BLUE,
+    backgroundColor: colors.CHIP_ACTIVE_BG,
+  },
+  answerChipText: {
+    fontSize: 13,
+    color: colors.TEXT_DARK,
+  },
+  answerChipTextActive: {
+    color: colors.PRIMARY_BLUE,
+    fontWeight: '600',
+  },
+  successOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  successCard: {
+    width: '100%',
+    backgroundColor: colors.CARD_WHITE,
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    gap: 12,
+  },
+  successTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.TEXT_DARK,
+    textAlign: 'center',
+  },
+  successText: {
+    fontSize: 14,
+    color: colors.TEXT_MEDIUM,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 2,
+  },
+  notifyContactsBtn: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: colors.PRIMARY_BLUE,
+    backgroundColor: colors.CHIP_ACTIVE_BG,
+    borderRadius: 100,
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  notifyContactsText: {
+    color: colors.PRIMARY_BLUE,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  noContactsText: {
+    color: colors.TEXT_MEDIUM,
+    fontSize: 13,
+  },
+  continueStatusBtn: {
+    width: '100%',
+    minHeight: 52,
+    borderRadius: 14,
+    backgroundColor: colors.PRIMARY_BLUE,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  continueStatusBtnText: {
+    flexShrink: 1,
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
   warningCard: {
     backgroundColor: colors.WARNING_BG,
     borderRadius: 12,
@@ -468,94 +756,6 @@ const makeStyles = (colors) => StyleSheet.create({
   },
   gap20: { height: 20 },
   gap32: { height: 32 },
-  // Countdown card
-  countdownCard: {
-    backgroundColor: colors.BACKGROUND_WHITE,
-    borderRadius: 24,
-    padding: 36,
-    alignItems: 'center',
-    width: 260,
-  },
-  countdownTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.TEXT_DARK,
-    marginBottom: 12,
-  },
-  countdownNumber: {
-    fontSize: 72,
-    fontWeight: '900',
-    color: colors.SOS_RED,
-    lineHeight: 80,
-  },
-  countdownCancelBtn: {
-    marginTop: 24,
-    backgroundColor: colors.BORDER_GREY,
-    borderRadius: 100,
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-  },
-  countdownCancelText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.TEXT_DARK,
-  },
-  // Success overlay (modal)
-  successOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  successCard: {
-    backgroundColor: colors.CARD_WHITE,
-    borderRadius: 24,
-    padding: 36,
-    alignItems: 'center',
-    width: 280,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 12,
-  },
-  successIcon: {
-    marginBottom: 16,
-  },
-  successTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.TEXT_DARK,
-    marginBottom: 8,
-  },
-  successSub: {
-    fontSize: 14,
-    color: colors.TEXT_MEDIUM,
-    textAlign: 'center',
-    lineHeight: 21,
-  },
-  notifyBtn: {
-    marginTop: 16,
-    backgroundColor: colors.CHIP_ACTIVE_BG,
-    borderRadius: 100,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    width: '100%',
-    alignItems: 'center',
-  },
-  notifyBtnInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  notifyBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.PRIMARY_BLUE,
-  },
-  successSpinner: {
-    marginTop: 16,
-  },
 });
 
 export default EmergencyAlertScreen;

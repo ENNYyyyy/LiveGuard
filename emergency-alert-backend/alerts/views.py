@@ -15,6 +15,7 @@ from .serializers import (
     EmergencyAlertDetailSerializer,
     EmergencyAlertListSerializer,
 )
+from .priority_engine import QUESTION_SCHEMA_VERSION, get_questions
 from agencies.models import SecurityAgency
 from notifications.services import NotificationDispatcher, enqueue_alert_dispatch
 
@@ -71,8 +72,13 @@ class CreateEmergencyAlertView(APIView):
     throttle_classes = [AlertCreationThrottle]
 
     def post(self, request):
+        payload = request.data.copy()
+        if hasattr(payload, 'pop'):
+            # Priority is computed server-side from risk answers.
+            payload.pop('priority_level', None)
+
         serializer = EmergencyAlertCreateSerializer(
-            data=request.data, context={'request': request}
+            data=payload, context={'request': request}
         )
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -122,6 +128,33 @@ class CreateEmergencyAlertView(APIView):
         return Response(
             EmergencyAlertDetailSerializer(alert, context={'request': request}).data,
             status=status.HTTP_201_CREATED,
+        )
+
+
+class PriorityQuestionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        alert_type = request.query_params.get('alert_type')
+        if not alert_type:
+            return Response(
+                {'detail': 'alert_type query parameter is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            normalized_type = str(alert_type).strip().upper()
+            questions = get_questions(normalized_type)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {
+                'alert_type': normalized_type,
+                'version': QUESTION_SCHEMA_VERSION,
+                'questions': questions,
+            },
+            status=status.HTTP_200_OK,
         )
 
 

@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useDispatch, useSelector } from 'react-redux';
 import { requestLocationPermission, getCurrentLocation, fetchLocation } from '../../store/locationSlice';
 import { fetchAlertHistory } from '../../store/alertSlice';
@@ -149,6 +149,7 @@ const HomeScreen = ({ navigation }) => {
         <View style={styles.mapContainer}>
           {hasCoords && !permissionDenied ? (
             <MapView
+              provider={PROVIDER_GOOGLE}
               style={styles.map}
               region={{
                 latitude,
@@ -161,7 +162,6 @@ const HomeScreen = ({ navigation }) => {
               pitchEnabled={false}
               rotateEnabled={false}
               customMapStyle={isDark ? DARK_MAP_STYLE : []}
-              userInterfaceStyle={isDark ? 'dark' : 'light'}
             >
               <Marker
                 coordinate={{ latitude, longitude }}

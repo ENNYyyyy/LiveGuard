@@ -40,6 +40,7 @@ function HomeStack() {
         options={{ presentation: 'modal' }}
       />
       <Stack.Screen name="LocationPickerScreen" component={LocationPickerScreen} />
+      <Stack.Screen name="AlertStatusScreen" component={AlertStatusScreen} />
     </Stack.Navigator>
   );
 }

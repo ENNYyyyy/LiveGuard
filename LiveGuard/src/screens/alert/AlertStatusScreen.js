@@ -14,7 +14,7 @@ import * as Haptics from 'expo-haptics';
 import { useIsFocused } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch, useSelector } from 'react-redux';
@@ -328,6 +328,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
         {/* Map */}
         <View style={styles.mapWrapper}>
           <MapView
+            provider={PROVIDER_GOOGLE}
             style={styles.map}
             region={{
               latitude:       userCoord.latitude,
@@ -337,7 +338,6 @@ const AlertStatusScreen = ({ navigation, route }) => {
             }}
             scrollEnabled={false}
             customMapStyle={isDark ? DARK_MAP_STYLE : []}
-            userInterfaceStyle={isDark ? 'dark' : 'light'}
           >
             <Marker coordinate={userCoord} pinColor={colors.SOS_RED} title="You" />
             {responderCoord && (
@@ -415,7 +415,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
               Type: <Text style={styles.detailValue}>{currentAlert.alert_type?.replace(/_/g, ' ')}</Text>
             </Text>
             <Text style={styles.detailRow}>
-              Priority: <Text style={styles.detailValue}>{currentAlert.priority_level}</Text>
+              Computed Priority: <Text style={styles.detailValue}>{currentAlert.priority_level}</Text>
             </Text>
             <Text style={styles.detailRow}>
               Sent: <Text style={styles.detailValue}>{new Date(currentAlert.created_at).toLocaleString()}</Text>

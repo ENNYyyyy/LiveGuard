@@ -2,12 +2,32 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import api from '../api/axiosConfig';
 import config from '../utils/config';
 
+const flattenErrorMessages = (value, parentKey = '') => {
+  if (value == null) return [];
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => flattenErrorMessages(item, parentKey));
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, nested]) => {
+      const combined = parentKey ? `${parentKey}.${key}` : key;
+      return flattenErrorMessages(nested, combined);
+    });
+  }
+
+  if (parentKey) {
+    return [`${parentKey}: ${value}`];
+  }
+  return [`${value}`];
+};
+
 export const createEmergencyAlert = createAsyncThunk(
   'alert/create',
-  async ({ alert_type, priority_level, description, latitude, longitude, accuracy }, { rejectWithValue }) => {
+  async ({ alert_type, risk_answers, description, latitude, longitude, accuracy }, { rejectWithValue }) => {
     try {
       const { data } = await api.post('/api/alerts/create/', {
-        alert_type, priority_level, description, latitude, longitude, accuracy,
+        alert_type, risk_answers, description, latitude, longitude, accuracy,
       }, { timeout: config.ALERT_TIMEOUT });
       return data;
     } catch (err) {
@@ -15,15 +35,28 @@ export const createEmergencyAlert = createAsyncThunk(
       if (errData) {
         if (typeof errData === 'string') return rejectWithValue(errData);
         if (errData.detail) return rejectWithValue(errData.detail);
-        // DRF field-level errors: { field: ["msg", ...], ... }
         if (typeof errData === 'object') {
-          const fieldErrors = Object.entries(errData)
-            .map(([field, msgs]) => `${field}: ${Array.isArray(msgs) ? msgs[0] : msgs}`)
-            .join('; ');
+          const fieldErrors = flattenErrorMessages(errData).join('; ');
           if (fieldErrors) return rejectWithValue(fieldErrors);
         }
       }
       return rejectWithValue('Failed to send alert. Please try again.');
+    }
+  }
+);
+
+export const fetchPriorityQuestions = createAsyncThunk(
+  'alert/fetchPriorityQuestions',
+  async (alert_type, { rejectWithValue }) => {
+    try {
+      const { data } = await api.get('/api/alerts/priority-questions/', {
+        params: { alert_type },
+      });
+      return data;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.detail || 'Failed to load risk questions for this threat type.'
+      );
     }
   }
 );
@@ -100,6 +133,10 @@ const initialState = {
   statusError: null,
   historyError: null,
   cancelError: null,
+  priorityQuestions: [],
+  priorityQuestionsVersion: null,
+  questionsLoading: false,
+  questionsError: null,
 };
 
 const alertSlice = createSlice({
@@ -115,6 +152,7 @@ const alertSlice = createSlice({
       state.statusError = null;
       state.historyError = null;
       state.cancelError = null;
+      state.questionsError = null;
     },
   },
   extraReducers: (builder) => {
@@ -178,6 +216,27 @@ const alertSlice = createSlice({
       })
       .addCase(cancelAlert.rejected, (state, { payload }) => {
         state.cancelError = payload;
+      });
+
+    // fetchPriorityQuestions
+    builder
+      .addCase(fetchPriorityQuestions.pending, (state) => {
+        state.questionsLoading = true;
+        state.questionsError = null;
+        state.priorityQuestions = [];
+        state.priorityQuestionsVersion = null;
+      })
+      .addCase(fetchPriorityQuestions.fulfilled, (state, { payload }) => {
+        state.questionsLoading = false;
+        state.priorityQuestions = payload?.questions || [];
+        state.priorityQuestionsVersion = payload?.version ?? null;
+        state.questionsError = null;
+      })
+      .addCase(fetchPriorityQuestions.rejected, (state, { payload }) => {
+        state.questionsLoading = false;
+        state.priorityQuestions = [];
+        state.priorityQuestionsVersion = null;
+        state.questionsError = payload;
       });
   },
 });

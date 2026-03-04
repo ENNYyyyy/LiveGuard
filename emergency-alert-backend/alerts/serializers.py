@@ -2,6 +2,11 @@ import re
 from decimal import Decimal
 from rest_framework import serializers
 from .models import EmergencyAlert, Location, AlertAssignment, Acknowledgment
+from .priority_engine import (
+    RiskAnswerValidationError,
+    compute_priority,
+    validate_risk_answers,
+)
 
 NIGERIAN_PHONE_RE = re.compile(r'^\+234[789][01]\d{8}$|^0[789][01]\d{8}$')
 
@@ -40,11 +45,16 @@ class AgencyNestedSerializer(serializers.Serializer):
 class AlertAssignmentSerializer(serializers.ModelSerializer):
     agency = AgencyNestedSerializer(read_only=True)
     acknowledgment = AcknowledgmentSerializer(read_only=True, allow_null=True)
+    alert_id = serializers.IntegerField(source='alert.alert_id', read_only=True)
+    alert_type = serializers.CharField(source='alert.alert_type', read_only=True)
+    alert_priority_level = serializers.CharField(source='alert.priority_level', read_only=True)
+    alert_status = serializers.CharField(source='alert.status', read_only=True)
 
     class Meta:
         model = AlertAssignment
         fields = [
-            'assignment_id', 'agency', 'assigned_at',
+            'assignment_id', 'alert_id', 'alert_type', 'alert_priority_level', 'alert_status',
+            'agency', 'assigned_at',
             'notification_status', 'response_time',
             'assignment_priority', 'acknowledgment',
         ]
@@ -55,21 +65,16 @@ class EmergencyAlertCreateSerializer(serializers.ModelSerializer):
     latitude = serializers.DecimalField(max_digits=10, decimal_places=7, write_only=True)
     longitude = serializers.DecimalField(max_digits=10, decimal_places=7, write_only=True)
     accuracy = serializers.FloatField(write_only=True, required=False, allow_null=True)
+    risk_answers = serializers.JSONField(write_only=True)
 
     class Meta:
         model = EmergencyAlert
-        fields = ['alert_type', 'priority_level', 'description', 'latitude', 'longitude', 'accuracy']
+        fields = ['alert_type', 'description', 'risk_answers', 'latitude', 'longitude', 'accuracy']
 
     def validate_alert_type(self, value):
         valid = [choice[0] for choice in EmergencyAlert.ALERT_TYPES]
         if value not in valid:
             raise serializers.ValidationError(f"alert_type must be one of: {', '.join(valid)}.")
-        return value
-
-    def validate_priority_level(self, value):
-        valid = [choice[0] for choice in EmergencyAlert.PRIORITY_LEVELS]
-        if value not in valid:
-            raise serializers.ValidationError(f"priority_level must be one of: {', '.join(valid)}.")
         return value
 
     def validate_latitude(self, value):
@@ -82,12 +87,32 @@ class EmergencyAlertCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Longitude must be between -180 and 180.")
         return value
 
+    def validate(self, attrs):
+        alert_type = attrs.get('alert_type')
+        risk_answers = attrs.get('risk_answers')
+        try:
+            cleaned_answers = validate_risk_answers(alert_type, risk_answers)
+        except RiskAnswerValidationError as exc:
+            raise serializers.ValidationError({'risk_answers': exc.errors}) from exc
+
+        attrs['risk_answers'] = cleaned_answers
+        attrs['_priority_assessment'] = compute_priority(
+            alert_type,
+            cleaned_answers,
+            answers_prevalidated=True,
+        )
+        return attrs
+
     def create(self, validated_data):
         latitude = validated_data.pop('latitude')
         longitude = validated_data.pop('longitude')
         accuracy = validated_data.pop('accuracy', None)
+        validated_data.pop('risk_answers', None)
+        priority_assessment = validated_data.pop('_priority_assessment')
+        validated_data['priority_level'] = priority_assessment['priority_level']
 
         alert = EmergencyAlert.objects.create(**validated_data)
+        alert.priority_assessment = priority_assessment
 
         Location.objects.create(
             alert=alert,

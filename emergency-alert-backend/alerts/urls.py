@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     CreateEmergencyAlertView,
+    PriorityQuestionsView,
     AlertStatusView,
     UserAlertHistoryView,
     UpdateAlertLocationView,
@@ -9,6 +10,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('priority-questions/', PriorityQuestionsView.as_view(), name='alert-priority-questions'),
     path('create/', CreateEmergencyAlertView.as_view(), name='alert-create'),
     path('history/', UserAlertHistoryView.as_view(), name='alert-history'),
     path('<int:alert_id>/status/', AlertStatusView.as_view(), name='alert-status'),

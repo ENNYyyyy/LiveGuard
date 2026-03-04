@@ -9,13 +9,6 @@ export const EMERGENCY_TYPES = [
   { key: 'OTHER',         label: 'Other' },
 ];
 
-export const PRIORITY_LEVELS = [
-  { key: 'CRITICAL', label: 'Critical / Urgent' },
-  { key: 'MEDIUM', label: 'Medium' },
-  { key: 'HIGH', label: 'High' },
-  { key: 'LOW', label: 'Low' },
-];
-
 export const ALERT_STATUSES = {
   PENDING:      { label: 'Pending',      color: '#F59E0B', bgColor: '#FEF3C7' },
   DISPATCHED:   { label: 'Dispatched',   color: '#3B82F6', bgColor: '#DBEAFE' },

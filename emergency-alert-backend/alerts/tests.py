@@ -34,8 +34,14 @@ def create_agency(name='Police HQ', agency_type='POLICE', email='police@test.com
 
 ALERT_PAYLOAD = {
     'alert_type': 'ARMED_ROBBERY',
-    'priority_level': 'HIGH',
     'description': 'Robbery in progress',
+    'risk_answers': {
+        'robbery_in_progress': True,
+        'suspects_armed': False,
+        'shots_fired': False,
+        'locations_affected': 'ONE',
+        'injury_severity': 'NONE',
+    },
     'latitude': '6.5244',
     'longitude': '3.3792',
     'accuracy': 10.0,
@@ -51,18 +57,50 @@ class CreateAlertTests(APITestCase):
 
     @patch('alerts.views.NotificationDispatcher.dispatch_alert')
     def test_create_alert_success(self, mock_dispatch):
-        response = self.client.post(self.url, ALERT_PAYLOAD, **auth_header(self.user))
+        response = self.client.post(self.url, ALERT_PAYLOAD, format='json', **auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['alert_type'], 'ARMED_ROBBERY')
         self.assertEqual(response.data['status'], 'DISPATCHED')
+        self.assertEqual(response.data['priority_level'], 'MEDIUM')
+
+    @patch('alerts.views.NotificationDispatcher.dispatch_alert')
+    def test_create_alert_ignores_client_priority_tampering(self, mock_dispatch):
+        payload = {
+            **ALERT_PAYLOAD,
+            'priority_level': 'LOW',  # ignored by backend
+            'risk_answers': {
+                'active_attack': True,
+                'explosives_or_bombs': True,
+                'hostages': True,
+                'people_at_risk': 'HUNDRED_ONE_TO_THOUSAND',
+                'injury_severity': 'CRITICAL_OR_FATAL',
+            },
+            'alert_type': 'TERRORISM',
+        }
+        response = self.client.post(self.url, payload, format='json', **auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['priority_level'], 'CRITICAL')
+
+        alert = EmergencyAlert.objects.get(alert_id=response.data['alert_id'])
+        self.assertEqual(alert.priority_level, 'CRITICAL')
 
     @patch('alerts.views.NotificationDispatcher.dispatch_alert')
     def test_create_alert_assigns_correct_agencies(self, mock_dispatch):
         military = create_agency('Army', 'MILITARY', 'army@test.com', '+2348023456789')
         sec_force = create_agency('NSCDC', 'SECURITY_FORCE', 'nscdc@test.com', '+2348034567890')
 
-        payload = {**ALERT_PAYLOAD, 'alert_type': 'TERRORISM'}
-        response = self.client.post(self.url, payload, **auth_header(self.user))
+        payload = {
+            **ALERT_PAYLOAD,
+            'alert_type': 'TERRORISM',
+            'risk_answers': {
+                'active_attack': True,
+                'explosives_or_bombs': False,
+                'hostages': False,
+                'people_at_risk': 'FIVE_OR_FEWER',
+                'injury_severity': 'NONE',
+            },
+        }
+        response = self.client.post(self.url, payload, format='json', **auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         alert = EmergencyAlert.objects.get(alert_id=response.data['alert_id'])
@@ -76,7 +114,7 @@ class CreateAlertTests(APITestCase):
 
     @patch('alerts.views.NotificationDispatcher.dispatch_alert')
     def test_create_alert_creates_location(self, mock_dispatch):
-        response = self.client.post(self.url, ALERT_PAYLOAD, **auth_header(self.user))
+        response = self.client.post(self.url, ALERT_PAYLOAD, format='json', **auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         alert = EmergencyAlert.objects.get(alert_id=response.data['alert_id'])
@@ -85,22 +123,163 @@ class CreateAlertTests(APITestCase):
         self.assertAlmostEqual(float(alert.location.longitude), 3.3792, places=3)
 
     def test_create_alert_unauthenticated(self):
-        response = self.client.post(self.url, ALERT_PAYLOAD)
+        response = self.client.post(self.url, ALERT_PAYLOAD, format='json')
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     @patch('alerts.views.NotificationDispatcher.dispatch_alert')
     def test_create_alert_invalid_latitude(self, mock_dispatch):
         payload = {**ALERT_PAYLOAD, 'latitude': '999'}
-        response = self.client.post(self.url, payload, **auth_header(self.user))
+        response = self.client.post(self.url, payload, format='json', **auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('latitude', response.data)
 
     @patch('alerts.views.NotificationDispatcher.dispatch_alert')
+    def test_create_alert_missing_required_risk_answers(self, mock_dispatch):
+        payload = {
+            **ALERT_PAYLOAD,
+            'risk_answers': {
+                'robbery_in_progress': True,
+            },
+        }
+        response = self.client.post(self.url, payload, format='json', **auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('risk_answers', response.data)
+        self.assertIn('locations_affected', response.data['risk_answers'])
+
+    @patch('alerts.views.NotificationDispatcher.dispatch_alert')
     def test_create_alert_invalid_longitude(self, mock_dispatch):
         payload = {**ALERT_PAYLOAD, 'longitude': '-999'}
-        response = self.client.post(self.url, payload, **auth_header(self.user))
+        response = self.client.post(self.url, payload, format='json', **auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('longitude', response.data)
+
+
+class PriorityQuestionsTests(APITestCase):
+    url = reverse('alert-priority-questions')
+
+    def setUp(self):
+        self.user = create_user()
+
+    def test_requires_alert_type_query_param(self):
+        response = self.client.get(self.url, **auth_header(self.user))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('detail', response.data)
+
+    def test_returns_questions_for_alert_type(self):
+        response = self.client.get(
+            self.url,
+            {'alert_type': 'FIRE_INCIDENCE'},
+            **auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['alert_type'], 'FIRE_INCIDENCE')
+        self.assertIn('version', response.data)
+        self.assertGreater(len(response.data['questions']), 0)
+        first_question = response.data['questions'][0]
+        self.assertIn('id', first_question)
+        self.assertIn('type', first_question)
+        self.assertIn('label', first_question)
+        self.assertIn('required', first_question)
+        self.assertIn('weight', first_question)
+
+    def test_rejects_unknown_alert_type(self):
+        response = self.client.get(
+            self.url,
+            {'alert_type': 'ALIEN_INVASION'},
+            **auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('detail', response.data)
+
+
+class PriorityEngineTests(APITestCase):
+    """Unit-level tests for the priority engine via the questions and create endpoints."""
+
+    def setUp(self):
+        self.user = create_user()
+
+    def test_all_alert_types_return_questions(self):
+        """Every supported alert type must return at least one question."""
+        alert_types = [
+            'FIRE_INCIDENCE', 'TERRORISM', 'BANDITRY', 'KIDNAPPING',
+            'ARMED_ROBBERY', 'ROBBERY', 'ACCIDENT', 'OTHER',
+        ]
+        url = reverse('alert-priority-questions')
+        for alert_type in alert_types:
+            response = self.client.get(url, {'alert_type': alert_type}, **auth_header(self.user))
+            self.assertEqual(response.status_code, status.HTTP_200_OK, f'Failed for {alert_type}')
+            self.assertGreater(
+                len(response.data['questions']), 0,
+                f'No questions returned for {alert_type}',
+            )
+
+    @patch('alerts.views.NotificationDispatcher.dispatch_alert')
+    def test_critical_override_from_boolean_flag(self, mock_dispatch):
+        """
+        people_trapped=True is a critical_if_true override for FIRE_INCIDENCE.
+        Even if the base+other scores would produce HIGH, the result must be CRITICAL.
+        """
+        payload = {
+            'alert_type': 'FIRE_INCIDENCE',
+            'latitude': '6.5244',
+            'longitude': '3.3792',
+            'risk_answers': {
+                'buildings_affected': 'ONE',    # score 8 — not critical
+                'people_trapped': True,        # critical_if_true=True → override
+                'spread_rate': 'CONTAINED',    # score 5
+                'hazardous_materials': False,
+                'injury_severity': 'NONE',     # score 0
+            },
+        }
+        response = self.client.post(
+            reverse('alert-create'), payload, format='json', **auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['priority_level'], 'CRITICAL')
+
+    @patch('alerts.views.NotificationDispatcher.dispatch_alert')
+    def test_invalid_enum_risk_answer_returns_400(self, mock_dispatch):
+        """Submitting an unrecognised enum value for a single_select question → 400."""
+        payload = {
+            'alert_type': 'FIRE_INCIDENCE',
+            'latitude': '6.5244',
+            'longitude': '3.3792',
+            'risk_answers': {
+                'buildings_affected': 'ONE',
+                'people_trapped': False,
+                'spread_rate': 'SUPERSONIC',   # invalid option
+                'hazardous_materials': False,
+                'injury_severity': 'NONE',
+            },
+        }
+        response = self.client.post(
+            reverse('alert-create'), payload, format='json', **auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('risk_answers', response.data)
+        self.assertIn('spread_rate', response.data['risk_answers'])
+
+    @patch('alerts.views.NotificationDispatcher.dispatch_alert')
+    def test_out_of_range_integer_risk_answer_returns_400(self, mock_dispatch):
+        """Invalid single_select option value for buildings_affected → 400."""
+        payload = {
+            'alert_type': 'FIRE_INCIDENCE',
+            'latitude': '6.5244',
+            'longitude': '3.3792',
+            'risk_answers': {
+                'buildings_affected': 'ONE_MILLION',  # not a valid option
+                'people_trapped': False,
+                'spread_rate': 'CONTAINED',
+                'hazardous_materials': False,
+                'injury_severity': 'NONE',
+            },
+        }
+        response = self.client.post(
+            reverse('alert-create'), payload, format='json', **auth_header(self.user),
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('risk_answers', response.data)
+        self.assertIn('buildings_affected', response.data['risk_answers'])
 
 
 class AlertStatusViewTests(APITestCase):

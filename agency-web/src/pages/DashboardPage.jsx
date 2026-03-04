@@ -49,16 +49,18 @@ const elapsedStr = (assignedAt, now) => {
 };
 
 /* ─── Priority badge colour ──────────────────────────────────────────────── */
-const priorityBadge = (p) => {
-  if (p === 1) return { label: 'CRITICAL', cls: 'badge critical' };
-  if (p === 2) return { label: 'HIGH',     cls: 'badge high'     };
-  if (p === 3) return { label: 'MEDIUM',   cls: 'badge medium'   };
-  return       { label: 'LOW',      cls: 'badge low'      };
+const priorityBadge = (priorityLevel) => {
+  const normalized = String(priorityLevel || '').toUpperCase();
+  if (normalized === 'CRITICAL') return { label: 'CRITICAL', cls: 'badge critical' };
+  if (normalized === 'HIGH') return { label: 'HIGH', cls: 'badge high' };
+  if (normalized === 'MEDIUM') return { label: 'MEDIUM', cls: 'badge medium' };
+  return { label: 'LOW', cls: 'badge low' };
 };
 
 /* ─── Queue card ─────────────────────────────────────────────────────────── */
 const QueueCard = ({ item, active, onClick, now }) => {
-  const pb = priorityBadge(item.assignment_priority);
+  const pb = priorityBadge(item.alert_priority_level);
+  const incidentType = item.alert_type || alertLabel(item.agency?.agency_type);
   return (
     <div
       className={`queue-card${active ? ' active' : ''}`}
@@ -67,13 +69,13 @@ const QueueCard = ({ item, active, onClick, now }) => {
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && onClick(item.assignment_id)}
     >
-      <div className="queue-card-type">{alertLabel(item.agency?.agency_type)}</div>
+      <div className="queue-card-type">{incidentType}</div>
       <div className="queue-card-meta">
         <span>Active: </span>
         <span className="queue-card-timer">{elapsedStr(item.assigned_at, now)}</span>
       </div>
       <div className="queue-card-row">
-        <span className={pb.cls} style={{ fontSize: 10 }}>{pb.label}</span>
+        <span className={pb.cls} style={{ fontSize: 10 }}>Computed {pb.label}</span>
         <span className={`badge ${(item.notification_status || '').toLowerCase()}`}
               style={{ fontSize: 10 }}>
           {item.notification_status || 'PENDING'}
@@ -343,7 +345,7 @@ const DashboardPage = () => {
     }
   };
 
-  const pb = selected ? priorityBadge(selected.assignment_priority) : null;
+  const pb = selected ? priorityBadge(selected.alert_priority_level) : null;
 
   /* ── Render ── */
   return (

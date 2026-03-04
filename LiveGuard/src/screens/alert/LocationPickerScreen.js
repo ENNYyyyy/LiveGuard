@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Keyboard,
 } from 'react-native';
-import MapView from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useDispatch, useSelector } from 'react-redux';
 import { setLocation } from '../../store/locationSlice';
@@ -139,12 +139,12 @@ const LocationPickerScreen = ({ navigation }) => {
     <View style={styles.container}>
       {/* Full-screen map */}
       <MapView
+        provider={PROVIDER_GOOGLE}
         ref={mapRef}
         style={StyleSheet.absoluteFill}
         initialRegion={initialRegion}
         onRegionChangeComplete={handleRegionChangeComplete}
         customMapStyle={isDark ? DARK_MAP_STYLE : []}
-        userInterfaceStyle={isDark ? 'dark' : 'light'}
       />
 
       {/* Fixed center pin */}

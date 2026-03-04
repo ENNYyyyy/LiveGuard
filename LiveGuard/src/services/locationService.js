@@ -6,12 +6,35 @@ export async function requestLocationPermission() {
 }
 
 export async function getCurrentPosition() {
-  // Returns { latitude, longitude, accuracy }
-  // Throws if permission denied or GPS unavailable
-  const location = await Location.getCurrentPositionAsync({
-    accuracy: Location.Accuracy.High,
-    timeout: 10000,
+  // Fast path: return a recent cached fix instantly (no GPS wait needed).
+  try {
+    const last = await Location.getLastKnownPositionAsync();
+    if (last) {
+      const ageMs = Date.now() - last.timestamp;
+      if (ageMs <= 30_000 && last.coords.accuracy <= 200) {
+        return {
+          latitude: last.coords.latitude,
+          longitude: last.coords.longitude,
+          accuracy: last.coords.accuracy,
+        };
+      }
+    }
+  } catch {
+    // getLastKnownPositionAsync can throw on some devices; fall through
+  }
+
+  // Slow path: request a fresh GPS fix with a real 10-second timeout.
+  // Note: the `timeout` option is not supported by expo-location — we use Promise.race instead.
+  const locationPromise = Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.Balanced,
   });
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(
+      () => reject(new Error('Unable to determine your location. Please try again.')),
+      10_000
+    )
+  );
+  const location = await Promise.race([locationPromise, timeoutPromise]);
   return {
     latitude: location.coords.latitude,
     longitude: location.coords.longitude,

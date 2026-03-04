@@ -166,7 +166,7 @@ const AlertDetailPage = () => {
                     <th>Assignment #</th>
                     <th>Agency</th>
                     <th>Type</th>
-                    <th>Priority</th>
+                    <th>Dispatch Order</th>
                     <th>Notif. Status</th>
                     <th>Assigned At</th>
                     <th>Acknowledged By</th>

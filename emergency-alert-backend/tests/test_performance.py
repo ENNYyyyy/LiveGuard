@@ -54,8 +54,14 @@ def _authed_client(token_str):
 
 ALERT_PAYLOAD = {
     'alert_type': 'ARMED_ROBBERY',
-    'priority_level': 'HIGH',
     'description': 'Performance test alert',
+    'risk_answers': {
+        'robbery_in_progress': True,
+        'suspects_armed': False,
+        'shots_fired': False,
+        'locations_affected': 'ONE',
+        'injury_severity': 'NONE',
+    },
     'latitude': '6.5244',
     'longitude': '3.3792',
     'accuracy': 10.0,
