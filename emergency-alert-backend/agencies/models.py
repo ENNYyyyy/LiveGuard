@@ -21,6 +21,7 @@ class SecurityAgency(models.Model):
     address = TextField()
     is_active = BooleanField(default=True)
     fcm_token = TextField(blank=True, null=True)
+    web_push_subscription = TextField(blank=True, null=True)  # JSON from browser PushManager
     # Optional geo coordinates — enables proximity-aware dispatch when set
     latitude  = DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     longitude = DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)

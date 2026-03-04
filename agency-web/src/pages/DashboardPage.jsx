@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   fetchAgencyAssignments,
   fetchAssignmentLocation,
   acknowledgeAssignment,
   updateAssignmentStatus,
+  registerWebPushSubscription,
 } from '../api/agency';
 import { parseApiError } from '../api/errors';
 
@@ -90,10 +91,34 @@ const QueueCard = ({ item, active, onClick, now }) => {
 
 /* ─── Map panel ──────────────────────────────────────────────────────────── */
 const MapPanel = ({ locationData }) => {
-  const mapSrc =
-    locationData?.latitude && locationData?.longitude
-      ? `https://www.openstreetmap.org/export/embed.html?bbox=${locationData.longitude - 0.04},${locationData.latitude - 0.04},${locationData.longitude + 0.04},${locationData.latitude + 0.04}&layer=mapnik&marker=${locationData.latitude},${locationData.longitude}`
-      : null;
+  const [bboxSpan, setBboxSpan] = useState(0.04);
+  const viewportRef = useRef(null);
+
+  useEffect(() => {
+    setBboxSpan(0.04);
+  }, [locationData?.latitude, locationData?.longitude]);
+
+  const mapSrc = useMemo(() => {
+    if (!locationData?.latitude || !locationData?.longitude) return null;
+    const lat = Number(locationData.latitude);
+    const lng = Number(locationData.longitude);
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${lng - bboxSpan},${lat - bboxSpan},${lng + bboxSpan},${lat + bboxSpan}&layer=mapnik&marker=${lat},${lng}`;
+  }, [locationData?.latitude, locationData?.longitude, bboxSpan]);
+
+  const handleZoomIn = () => setBboxSpan((prev) => Math.max(0.005, prev * 0.75));
+  const handleZoomOut = () => setBboxSpan((prev) => Math.min(0.5, prev * 1.25));
+
+  const handleFullscreen = () => {
+    const target = viewportRef.current;
+    if (!target) return;
+
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+      return;
+    }
+
+    target.requestFullscreen?.();
+  };
 
   return (
     <div className="map-panel">
@@ -101,13 +126,13 @@ const MapPanel = ({ locationData }) => {
         <span className="map-title">Incident Location Map</span>
       </div>
 
-      <div className="map-viewport">
+      <div className="map-viewport" ref={viewportRef}>
         {mapSrc ? (
           <iframe src={mapSrc} title="Incident location map" />
         ) : (
           <div className="map-placeholder">
             <div className="map-placeholder-label">
-              <div style={{ fontSize: 32, marginBottom: 8 }}>🗺</div>
+              <div style={{ fontSize: 20, marginBottom: 8, fontWeight: 700 }}>MAP</div>
               Select an incident to view on map
             </div>
           </div>
@@ -115,16 +140,15 @@ const MapPanel = ({ locationData }) => {
       </div>
 
       <div className="map-controls">
-        <button className="map-ctrl-btn" title="Zoom in">+</button>
-        <button className="map-ctrl-btn" title="Zoom out">−</button>
-        <button className="map-ctrl-btn" title="Layers" style={{ fontSize: 12 }}>⊞</button>
-        <button className="map-ctrl-btn" title="Fullscreen" style={{ fontSize: 11 }}>⛶</button>
+        <button className="map-ctrl-btn" title="Zoom in" onClick={handleZoomIn} disabled={!mapSrc}>+</button>
+        <button className="map-ctrl-btn" title="Zoom out" onClick={handleZoomOut} disabled={!mapSrc}>-</button>
+        <button className="map-ctrl-btn" title="Layers" style={{ fontSize: 10 }}>L</button>
+        <button className="map-ctrl-btn" title="Fullscreen" style={{ fontSize: 9 }} onClick={handleFullscreen} disabled={!mapSrc}>FS</button>
       </div>
     </div>
   );
 };
 
-/* ─── Activity log ───────────────────────────────────────────────────────── */
 const ActivityLog = ({ assignment }) => {
   if (!assignment) return null;
 
@@ -132,9 +156,22 @@ const ActivityLog = ({ assignment }) => {
     { actor: 'SYSTEM', msg: 'Alert assigned and notification dispatched', time: fmt(assignment.assigned_at) },
   ];
 
-  if (assignment.assigned_at) {
-    const t2 = new Date(new Date(assignment.assigned_at).getTime() + 2000).toISOString();
-    entries.push({ actor: 'SYSTEM', msg: 'SMS sent to emergency contacts', time: fmt(t2) });
+  const smsLogs = (assignment.notification_logs || [])
+    .filter((log) => log.channel_type === 'SMS')
+    .sort((a, b) => new Date(a.sent_at) - new Date(b.sent_at));
+  const firstSmsSuccess = smsLogs.find((log) => log.delivery_status === 'SENT');
+  if (firstSmsSuccess) {
+    entries.push({
+      actor: 'SYSTEM',
+      msg: 'SMS sent to emergency contacts',
+      time: fmt(firstSmsSuccess.sent_at),
+    });
+  } else if (smsLogs.length > 0) {
+    entries.push({
+      actor: 'SYSTEM',
+      msg: 'SMS delivery failed',
+      time: fmt(smsLogs[smsLogs.length - 1].sent_at),
+    });
   }
 
   if (assignment.acknowledgment) {
@@ -276,6 +313,28 @@ const AckSection = ({ assignment, assignmentId, submitting, onAcknowledged }) =>
   );
 };
 
+/* ─── Alert sound (Web Audio API — no file needed) ───────────────────────── */
+const playAlertSound = () => {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const beep = (startTime, freq = 880, dur = 0.14) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, startTime);
+      gain.gain.setValueAtTime(0.35, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + dur);
+      osc.start(startTime);
+      osc.stop(startTime + dur);
+    };
+    beep(ctx.currentTime);
+    beep(ctx.currentTime + 0.18);
+    beep(ctx.currentTime + 0.36);
+  } catch { /* audio unavailable */ }
+};
+
 /* ─── Main dashboard ─────────────────────────────────────────────────────── */
 const DashboardPage = () => {
   const { user, logout } = useAuth();
@@ -292,6 +351,10 @@ const DashboardPage = () => {
   const [statusMsg,    setStatusMsg]    = useState('');
   const [statusErr,    setStatusErr]    = useState('');
 
+  const [newAlertToast, setNewAlertToast] = useState(0);
+  const prevIdsRef     = useRef(null);   // null = first load, Set after that
+  const toastTimerRef  = useRef(null);
+
   const now = useNow();
 
   /* ── Load all assignments ── */
@@ -301,6 +364,19 @@ const DashboardPage = () => {
     try {
       const data = await fetchAgencyAssignments();
       const list = normalizeList(data);
+
+      // Detect new assignments on every poll after the first load
+      if (prevIdsRef.current !== null) {
+        const incoming = list.filter((a) => !prevIdsRef.current.has(a.assignment_id));
+        if (incoming.length > 0) {
+          playAlertSound();
+          setNewAlertToast(incoming.length);
+          if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+          toastTimerRef.current = setTimeout(() => setNewAlertToast(0), 4000);
+        }
+      }
+      prevIdsRef.current = new Set(list.map((a) => a.assignment_id));
+
       setAssignments(list);
       if (list.length && !selectedId) setSelectedId(list[0].assignment_id);
     } catch (err) {
@@ -310,10 +386,44 @@ const DashboardPage = () => {
     }
   }, [selectedId]);
 
+  // Keep a ref to the latest loadAssignments so the interval never calls a stale closure
+  const loadAssignmentsRef = useRef(loadAssignments);
+  useEffect(() => { loadAssignmentsRef.current = loadAssignments; }, [loadAssignments]);
+
   useEffect(() => {
-    loadAssignments();
-    const id = setInterval(loadAssignments, 30_000);
+    loadAssignmentsRef.current();
+    const id = setInterval(() => loadAssignmentsRef.current(), 5_000);
     return () => clearInterval(id);
+  }, []);
+
+  /* ── Register browser Web Push subscription ── */
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+    const VAPID_PUBLIC_KEY = 'BKgtibt1OPoD0Xg3T30K9Jhl9PixGoCsWAKv7eQM-PIRO-UHXoVvQVpH1Agy3vlOcC1pIhDh5HB2l1jxbjuqJGY';
+
+    const urlBase64ToUint8Array = (base64String) => {
+      const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = atob(base64);
+      return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+    };
+
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((reg) => Notification.requestPermission().then((perm) => ({ reg, perm })))
+      .then(({ reg, perm }) => {
+        if (perm !== 'granted') return;
+        return reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+      })
+      .then((subscription) => {
+        if (!subscription) return;
+        return registerWebPushSubscription(subscription.toJSON());
+      })
+      .catch(() => {});
   }, []);
 
   /* ── Load location when selection changes ── */
@@ -350,6 +460,12 @@ const DashboardPage = () => {
   /* ── Render ── */
   return (
     <div className="dashboard">
+
+      {newAlertToast > 0 && (
+        <div className="new-alert-toast">
+          {newAlertToast === 1 ? '⚠ New emergency alert incoming' : `⚠ ${newAlertToast} new emergency alerts incoming`}
+        </div>
+      )}
 
       {/* ══ LEFT — Incoming Queue ══ */}
       <aside className="queue-panel">

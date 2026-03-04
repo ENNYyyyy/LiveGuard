@@ -1,4 +1,5 @@
 import math
+import logging
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -19,6 +20,7 @@ from .priority_engine import QUESTION_SCHEMA_VERSION, get_questions
 from agencies.models import SecurityAgency
 from notifications.services import NotificationDispatcher, enqueue_alert_dispatch
 
+logger = logging.getLogger(__name__)
 
 ALERT_TYPE_AGENCY_MAP = {
     'TERRORISM':      ['MILITARY', 'POLICE', 'SECURITY_FORCE'],
@@ -166,6 +168,7 @@ class AlertStatusView(APIView):
             alert = EmergencyAlert.objects.select_related('location').prefetch_related(
                 'assignments__agency',
                 'assignments__acknowledgment',
+                'assignments__notifications',
             ).get(alert_id=alert_id)
         except EmergencyAlert.DoesNotExist:
             return Response({'error': 'Alert not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -299,6 +302,22 @@ class CancelAlertView(APIView):
 
         alert.status = 'CANCELLED'
         alert.save(update_fields=['status'])
+
+        assignments = (
+            AlertAssignment.objects
+            .filter(alert=alert)
+            .select_related('alert', 'agency')
+        )
+        dispatcher = NotificationDispatcher()
+        for assignment in assignments:
+            try:
+                dispatcher.send_cancellation_notice(assignment)
+            except Exception:
+                logger.exception(
+                    "Cancellation notice failed for alert_id=%s assignment_id=%s",
+                    alert.alert_id,
+                    assignment.assignment_id,
+                )
 
         return Response(
             {'message': 'Alert cancelled.', 'alert_id': alert_id},

@@ -21,7 +21,7 @@ class AgencyAlertListView(APIView):
             AlertAssignment.objects
             .filter(agency=agency)
             .select_related('alert__location', 'agency')
-            .prefetch_related('acknowledgment')
+            .prefetch_related('acknowledgment', 'notifications')
             .order_by('-assigned_at')
         )
         return Response(
@@ -169,21 +169,34 @@ class AlertLocationView(APIView):
 class RegisterAgencyDeviceView(APIView):
     """
     POST /api/agency/register-device/
-    Registers (or updates) the push token for the caller's agency so that
-    emergency alert notifications can be delivered to the agency app.
+    Accepts either:
+      - { "push_token": "ExponentPushToken[...]" }  — native Expo/FCM token
+      - { "subscription": { "endpoint": "...", "keys": { ... } } }  — browser Web Push subscription
     """
     permission_classes = [IsAuthenticated, IsAgencyUser]
 
     def post(self, request):
-        push_token = request.data.get('push_token')
-        if not push_token:
-            return error_response(
-                detail='push_token is required.',
-                status_code=status.HTTP_400_BAD_REQUEST,
-            )
-
+        import json
         agency = request.user.agency_profile.agency
-        agency.fcm_token = push_token
-        agency.save(update_fields=['fcm_token'])
 
-        return Response({'message': 'Device registered successfully.'}, status=status.HTTP_200_OK)
+        subscription = request.data.get('subscription')
+        push_token = request.data.get('push_token')
+
+        if subscription:
+            agency.web_push_subscription = (
+                json.dumps(subscription)
+                if not isinstance(subscription, str)
+                else subscription
+            )
+            agency.save(update_fields=['web_push_subscription'])
+            return Response({'message': 'Web push subscription registered.'}, status=status.HTTP_200_OK)
+
+        if push_token:
+            agency.fcm_token = push_token
+            agency.save(update_fields=['fcm_token'])
+            return Response({'message': 'Device registered successfully.'}, status=status.HTTP_200_OK)
+
+        return error_response(
+            detail='Either subscription or push_token is required.',
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )

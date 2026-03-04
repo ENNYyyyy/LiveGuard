@@ -31,6 +31,10 @@ export const createEmergencyAlert = createAsyncThunk(
       }, { timeout: config.ALERT_TIMEOUT });
       return data;
     } catch (err) {
+      if (err.response?.status === 429) {
+        const retryAfter = parseInt(err.response.headers?.['retry-after'], 10) || 60;
+        return rejectWithValue({ isRateLimit: true, retryAfter });
+      }
       const errData = err.response?.data;
       if (errData) {
         if (typeof errData === 'string') return rejectWithValue(errData);
@@ -133,6 +137,7 @@ const initialState = {
   statusError: null,
   historyError: null,
   cancelError: null,
+  rateLimitUntil: null,
   priorityQuestions: [],
   priorityQuestionsVersion: null,
   questionsLoading: false,
@@ -153,6 +158,7 @@ const alertSlice = createSlice({
       state.historyError = null;
       state.cancelError = null;
       state.questionsError = null;
+      state.rateLimitUntil = null;
     },
   },
   extraReducers: (builder) => {
@@ -161,15 +167,22 @@ const alertSlice = createSlice({
       .addCase(createEmergencyAlert.pending, (state) => {
         state.submitting = true;
         state.submitError = null;
+        state.rateLimitUntil = null;
       })
       .addCase(createEmergencyAlert.fulfilled, (state, { payload }) => {
         state.submitting = false;
         state.currentAlert = payload;
         state.submitError = null;
+        state.rateLimitUntil = null;
       })
       .addCase(createEmergencyAlert.rejected, (state, { payload }) => {
         state.submitting = false;
-        state.submitError = payload;
+        if (payload?.isRateLimit) {
+          state.rateLimitUntil = Date.now() + payload.retryAfter * 1000;
+          state.submitError = null;
+        } else {
+          state.submitError = typeof payload === 'string' ? payload : 'Failed to send alert. Please try again.';
+        }
       });
 
     // fetchAlertStatus

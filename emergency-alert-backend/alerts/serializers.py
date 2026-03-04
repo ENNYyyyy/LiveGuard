@@ -2,6 +2,7 @@ import re
 from decimal import Decimal
 from rest_framework import serializers
 from .models import EmergencyAlert, Location, AlertAssignment, Acknowledgment
+from notifications.models import NotificationLog
 from .priority_engine import (
     RiskAnswerValidationError,
     compute_priority,
@@ -42,6 +43,12 @@ class AgencyNestedSerializer(serializers.Serializer):
     contact_phone = serializers.CharField()
 
 
+class NotificationLogLiteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationLog
+        fields = ['channel_type', 'delivery_status', 'sent_at', 'retry_count']
+
+
 class AlertAssignmentSerializer(serializers.ModelSerializer):
     agency = AgencyNestedSerializer(read_only=True)
     acknowledgment = AcknowledgmentSerializer(read_only=True, allow_null=True)
@@ -49,6 +56,7 @@ class AlertAssignmentSerializer(serializers.ModelSerializer):
     alert_type = serializers.CharField(source='alert.alert_type', read_only=True)
     alert_priority_level = serializers.CharField(source='alert.priority_level', read_only=True)
     alert_status = serializers.CharField(source='alert.status', read_only=True)
+    notification_logs = NotificationLogLiteSerializer(source='notifications', many=True, read_only=True)
 
     class Meta:
         model = AlertAssignment
@@ -56,7 +64,7 @@ class AlertAssignmentSerializer(serializers.ModelSerializer):
             'assignment_id', 'alert_id', 'alert_type', 'alert_priority_level', 'alert_status',
             'agency', 'assigned_at',
             'notification_status', 'response_time',
-            'assignment_priority', 'acknowledgment',
+            'assignment_priority', 'acknowledgment', 'notification_logs',
         ]
         read_only_fields = ['assignment_id', 'assigned_at']
 

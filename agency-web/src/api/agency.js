@@ -24,3 +24,8 @@ export const updateAssignmentStatus = async (assignmentId, status) => {
   });
   return response.data;
 };
+
+export const registerWebPushSubscription = async (subscription) => {
+  const response = await client.post('/api/agency/register-device/', { subscription });
+  return response.data;
+};

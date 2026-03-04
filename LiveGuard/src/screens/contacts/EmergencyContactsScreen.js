@@ -15,7 +15,8 @@ import { getContacts, saveContacts } from '../../services/contactsService';
 import InputField from '../../components/InputField';
 import PrimaryButton from '../../components/PrimaryButton';
 
-const MAX_CONTACTS = 3;
+const MAX_CONTACTS = 5;
+const MIN_CONTACTS = 3;
 
 // ── Inline toast ───────────────────────────────────────────────────────────────
 const Toast = ({ toast }) => {
@@ -130,6 +131,13 @@ const EmergencyContactsScreen = ({ navigation }) => {
   };
 
   const handleDelete = (id, name) => {
+    if (contacts.length <= MIN_CONTACTS) {
+      Alert.alert(
+        'Minimum Contacts',
+        `You must have at least ${MIN_CONTACTS} emergency contacts.`
+      );
+      return;
+    }
     Alert.alert('Remove Contact', `Remove ${name} from emergency contacts?`, [
       { text: 'Cancel', style: 'cancel' },
       {

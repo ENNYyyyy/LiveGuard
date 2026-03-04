@@ -219,6 +219,69 @@ class NotificationDispatcher:
                 )
             logger.error(f"User ack SMS failed for {user.phone_number}: {e}")
 
+    def send_cancellation_notice(self, assignment):
+        """
+        Notify the assigned agency that the civilian has cancelled their alert.
+        Sends push + SMS. Never raises to the caller.
+        """
+        import json
+
+        agency = assignment.agency
+        alert = assignment.alert
+        title = 'Alert Cancelled'
+        body = (
+            f"Alert #{alert.alert_id} ({alert.alert_type.replace('_', ' ')}) "
+            f"has been cancelled by the civilian. No further action required."
+        )
+        sms_text = (
+            f"ALERT CANCELLED\n"
+            f"Alert #{alert.alert_id} ({alert.alert_type.replace('_', ' ')}) "
+            f"has been cancelled by the civilian. No further action required."
+        )
+
+        # ── Push ────────────────────────────────────────────────────────────────
+        if agency.web_push_subscription:
+            def _do_web_push():
+                from pywebpush import webpush
+                from decouple import config
+                subscription = (
+                    json.loads(agency.web_push_subscription)
+                    if isinstance(agency.web_push_subscription, str)
+                    else agency.web_push_subscription
+                )
+                webpush(
+                    subscription_info=subscription,
+                    data=json.dumps({'title': title, 'body': body}),
+                    vapid_private_key=config('VAPID_PRIVATE_KEY'),
+                    vapid_claims={'sub': f"mailto:{config('VAPID_MAILTO')}"},
+                    content_encoding='aes128gcm',
+                )
+            self._send_with_retry(_do_web_push, assignment, 'PUSH', agency.web_push_subscription[:50])
+        elif agency.fcm_token:
+            def _do_push():
+                if agency.fcm_token.startswith('ExponentPushToken'):
+                    self._send_expo_push(token=agency.fcm_token, title=title, body=body)
+                else:
+                    from firebase_admin import messaging
+                    msg = messaging.Message(
+                        notification=messaging.Notification(title=title, body=body),
+                        token=agency.fcm_token,
+                    )
+                    messaging.send(msg)
+            self._send_with_retry(_do_push, assignment, 'PUSH', agency.fcm_token[:50])
+
+        # ── SMS ─────────────────────────────────────────────────────────────────
+        def _do_sms():
+            from twilio.rest import Client
+            from decouple import config
+            client = Client(config('TWILIO_ACCOUNT_SID'), config('TWILIO_AUTH_TOKEN'))
+            client.messages.create(
+                body=sms_text,
+                from_=config('TWILIO_PHONE_NUMBER'),
+                to=agency.contact_phone,
+            )
+        self._send_with_retry(_do_sms, assignment, 'SMS', agency.contact_phone)
+
     def send_status_update(self, assignment, new_status):
         """
         Notify the civilian user that their alert status has been updated.
@@ -393,39 +456,70 @@ class NotificationDispatcher:
 
     def _send_push(self, assignment, agency, alert_data):
         """
-        Send push notification to the agency device.
-        Routes to Expo Push API or Firebase Admin SDK based on token format.
+        Send push notification to the agency.
+        - Browser (Web Push): uses agency.web_push_subscription + pywebpush + VAPID keys.
+        - Native Expo/FCM token: falls back to Expo Push API / Firebase Admin SDK.
+        - No token at all: skips with a log entry.
         """
-        if not agency.fcm_token:
-            NotificationLog.objects.create(
-                assignment=assignment,
-                channel_type='PUSH',
-                recipient='NO_TOKEN',
-                delivery_status='FAILED',
-                error_message='No FCM token registered for this agency.',
-                retry_count=0,
-            )
-            logger.error(f"Push skipped for {agency.agency_name}: no token")
-            return
+        import json
 
         title = f"EMERGENCY: {alert_data['alert_type']}"
         body = f"Priority: {alert_data['priority']}. Location: {alert_data['address']}"
 
-        def _do_push():
-            if agency.fcm_token.startswith('ExponentPushToken'):
-                self._send_expo_push(
-                    token=agency.fcm_token, title=title, body=body, data=alert_data
-                )
-            else:
-                from firebase_admin import messaging
-                msg = messaging.Message(
-                    notification=messaging.Notification(title=title, body=body),
-                    data={k: str(v) for k, v in alert_data.items()},
-                    token=agency.fcm_token,
-                )
-                messaging.send(msg)
+        # ── Web Push (browser agency dashboard) ────────────────────────────────
+        if agency.web_push_subscription:
+            def _do_web_push():
+                from pywebpush import webpush, WebPushException
+                from decouple import config
 
-        self._send_with_retry(_do_push, assignment, 'PUSH', agency.fcm_token[:50])
+                subscription = (
+                    json.loads(agency.web_push_subscription)
+                    if isinstance(agency.web_push_subscription, str)
+                    else agency.web_push_subscription
+                )
+                webpush(
+                    subscription_info=subscription,
+                    data=json.dumps({'title': title, 'body': body, 'data': alert_data}),
+                    vapid_private_key=config('VAPID_PRIVATE_KEY'),
+                    vapid_claims={'sub': f"mailto:{config('VAPID_MAILTO')}"},
+                    content_encoding='aes128gcm',
+                )
+
+            self._send_with_retry(
+                _do_web_push, assignment, 'PUSH',
+                agency.web_push_subscription[:50]
+            )
+            return
+
+        # ── Native Expo / FCM token ─────────────────────────────────────────────
+        if agency.fcm_token:
+            def _do_push():
+                if agency.fcm_token.startswith('ExponentPushToken'):
+                    self._send_expo_push(
+                        token=agency.fcm_token, title=title, body=body, data=alert_data
+                    )
+                else:
+                    from firebase_admin import messaging
+                    msg = messaging.Message(
+                        notification=messaging.Notification(title=title, body=body),
+                        data={k: str(v) for k, v in alert_data.items()},
+                        token=agency.fcm_token,
+                    )
+                    messaging.send(msg)
+
+            self._send_with_retry(_do_push, assignment, 'PUSH', agency.fcm_token[:50])
+            return
+
+        # ── No token ────────────────────────────────────────────────────────────
+        NotificationLog.objects.create(
+            assignment=assignment,
+            channel_type='PUSH',
+            recipient='NO_TOKEN',
+            delivery_status='FAILED',
+            error_message='No FCM token or web push subscription registered for this agency.',
+            retry_count=0,
+        )
+        logger.error(f"Push skipped for {agency.agency_name}: no token")
 
     # ------------------------------------------------------------------
     # SMS / Email

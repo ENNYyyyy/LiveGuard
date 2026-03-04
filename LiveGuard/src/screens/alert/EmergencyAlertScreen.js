@@ -6,7 +6,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  Modal,
   ActivityIndicator,
   Linking,
   Platform,
@@ -32,6 +31,7 @@ const PENDING_ALERT_KEY = 'PENDING_ALERT';
 const EmergencyAlertScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const submitError = useSelector((state) => state.alert.submitError);
+  const rateLimitUntil = useSelector((state) => state.alert.rateLimitUntil);
   const priorityQuestions = useSelector((state) => state.alert.priorityQuestions);
   const questionsLoading = useSelector((state) => state.alert.questionsLoading);
   const questionsError = useSelector((state) => state.alert.questionsError);
@@ -45,10 +45,23 @@ const EmergencyAlertScreen = ({ navigation }) => {
   const [riskAnswers, setRiskAnswers] = useState({});
   const [loading, setLoading] = useState(false);
   const [hasPendingAlert, setHasPendingAlert] = useState(false);
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [createdAlertId, setCreatedAlertId] = useState(null);
   const [emergencyContacts, setEmergencyContacts] = useState([]);
-  const [latestAlertMeta, setLatestAlertMeta] = useState(null);
+  const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
+
+  // Live countdown when rate-limited
+  useEffect(() => {
+    if (!rateLimitUntil) {
+      setRateLimitCountdown(0);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((rateLimitUntil - Date.now()) / 1000));
+      setRateLimitCountdown(remaining);
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [rateLimitUntil]);
 
   const lastSelectedTypeRef = useRef(null);
   // Start fetching location immediately on mount so it's ready (or nearly ready)
@@ -176,20 +189,32 @@ const EmergencyAlertScreen = ({ navigation }) => {
       if (createEmergencyAlert.fulfilled.match(result)) {
         const newAlertId = result.payload?.alert_id;
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+        // Auto-notify emergency contacts via SMS
+        const phones = emergencyContacts.map((c) => c?.phone).filter(Boolean);
+        if (phones.length > 0) {
+          const typeLabel = (selectedType || 'Emergency').replace(/_/g, ' ');
+          const mapsUrl =
+            alertPayload.latitude != null && alertPayload.longitude != null
+              ? `https://maps.google.com/?q=${alertPayload.latitude},${alertPayload.longitude}`
+              : '';
+          const message =
+            `SOS alert via LiveGuard.\nEmergency: ${typeLabel}.` +
+            (mapsUrl ? `\nLocation: ${mapsUrl}` : '') +
+            '\nPlease check on me immediately.';
+          const encoded = encodeURIComponent(message);
+          const phoneList = phones.join(',');
+          const smsUrl =
+            Platform.OS === 'ios'
+              ? `sms:${phoneList}&body=${encoded}`
+              : `sms:?addresses=${phoneList}&body=${encoded}`;
+          Linking.openURL(smsUrl).catch(() => {});
+        }
+
         AsyncStorage.removeItem(PENDING_ALERT_KEY).catch(() => {});
         dispatch(fetchAlertHistory());
         setHasPendingAlert(false);
-        if (!newAlertId) {
-          navigation.replace('AlertStatusScreen');
-          return;
-        }
-        setCreatedAlertId(newAlertId);
-        setLatestAlertMeta({
-          alertType: selectedType,
-          latitude: alertPayload.latitude,
-          longitude: alertPayload.longitude,
-        });
-        setShowSuccessModal(true);
+        navigation.replace('AlertStatusScreen', { alert_id: newAlertId ?? undefined });
       } else {
         await AsyncStorage.setItem(PENDING_ALERT_KEY, JSON.stringify(alertPayload));
         setHasPendingAlert(true);
@@ -218,51 +243,6 @@ const EmergencyAlertScreen = ({ navigation }) => {
   const handleTypeSelect = (type) => {
     setSelectedType(type);
     setErrors((prev) => ({ ...prev, type: null, questions: null }));
-  };
-
-  const handleContinueToStatus = () => {
-    if (!createdAlertId) return;
-    setShowSuccessModal(false);
-    navigation.replace('AlertStatusScreen', { alert_id: createdAlertId });
-  };
-
-  const handleNotifyContacts = async () => {
-    if (emergencyContacts.length === 0) {
-      Alert.alert('No Contacts', 'No emergency contacts found. Add contacts first.');
-      return;
-    }
-
-    const phones = emergencyContacts
-      .map((contact) => contact?.phone)
-      .filter(Boolean);
-    if (phones.length === 0) {
-      Alert.alert('No Contacts', 'No valid contact phone numbers were found.');
-      return;
-    }
-
-    const typeLabel = (latestAlertMeta?.alertType || selectedType || 'Emergency').replace(/_/g, ' ');
-    const mapsUrl =
-      latestAlertMeta?.latitude != null && latestAlertMeta?.longitude != null
-        ? `https://maps.google.com/?q=${latestAlertMeta.latitude},${latestAlertMeta.longitude}`
-        : '';
-
-    const message =
-      `SOS alert via LiveGuard.\nEmergency: ${typeLabel}.` +
-      (mapsUrl ? `\nLocation: ${mapsUrl}` : '') +
-      '\nPlease check on me immediately.';
-    const encoded = encodeURIComponent(message);
-
-    const phoneList = phones.join(',');
-    const smsUrl =
-      Platform.OS === 'ios'
-        ? `sms:${phoneList}&body=${encoded}`
-        : `sms:?addresses=${phoneList}&body=${encoded}`;
-
-    try {
-      await Linking.openURL(smsUrl);
-    } catch {
-      Alert.alert('Unable to Open SMS', 'Please try again or notify contacts manually.');
-    }
   };
 
   const renderQuestionInput = (question) => {
@@ -350,6 +330,20 @@ const EmergencyAlertScreen = ({ navigation }) => {
           </View>
         )}
 
+        {/* Rate-limit banner */}
+        {rateLimitCountdown > 0 ? (
+          <View style={styles.rateLimitCard}>
+            <View style={styles.rateLimitRow}>
+              <Ionicons name="time-outline" size={18} color={colors.WARNING_TEXT} />
+              <Text style={styles.rateLimitTitle}>Too many alerts sent</Text>
+            </View>
+            <Text style={styles.rateLimitMsg}>
+              You can send another alert in{' '}
+              <Text style={styles.rateLimitTimer}>{rateLimitCountdown}s</Text>.
+            </Text>
+          </View>
+        ) : null}
+
         {/* Submission error with retry */}
         {submitError ? (
           <View style={styles.errorCard}>
@@ -433,49 +427,16 @@ const EmergencyAlertScreen = ({ navigation }) => {
         <View style={styles.gap20} />
 
         <PrimaryButton
-          title="Confirm Emergency Alert"
-          onPress={handleSubmit}
+          title={rateLimitCountdown > 0 ? `Please wait ${rateLimitCountdown}s` : 'Confirm Emergency Alert'}
+          onPress={rateLimitCountdown > 0 ? undefined : handleSubmit}
           loading={loading}
+          disabled={rateLimitCountdown > 0}
         />
 
         <TouchableOpacity style={styles.cancelBtn} onPress={() => navigation.goBack()}>
           <Text style={styles.cancelText}>Cancel</Text>
         </TouchableOpacity>
       </ScrollView>
-
-      <Modal visible={showSuccessModal} transparent animationType="fade" onRequestClose={handleContinueToStatus}>
-        <View style={styles.successOverlay}>
-          <View style={styles.successCard}>
-            <Ionicons name="checkmark-circle" size={60} color={colors.SUCCESS_GREEN} />
-            <Text style={styles.successTitle}>Alert Sent Successfully</Text>
-            <Text style={styles.successText}>
-              Your emergency alert has been received. You can notify your emergency contacts now.
-            </Text>
-
-            {emergencyContacts.length > 0 ? (
-              <TouchableOpacity style={styles.notifyContactsBtn} onPress={handleNotifyContacts}>
-                <Ionicons name="chatbubble-ellipses-outline" size={16} color={colors.PRIMARY_BLUE} />
-                <Text style={styles.notifyContactsText}>
-                  Notify {emergencyContacts.length} Contact{emergencyContacts.length > 1 ? 's' : ''}
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <Text style={styles.noContactsText}>No emergency contacts saved.</Text>
-            )}
-
-            <TouchableOpacity
-              style={styles.continueStatusBtn}
-              onPress={handleContinueToStatus}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.continueStatusBtnText} numberOfLines={1}>
-                Continue to Alert Status
-              </Text>
-              <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 };
@@ -658,74 +619,6 @@ const makeStyles = (colors) => StyleSheet.create({
   answerChipTextActive: {
     color: colors.PRIMARY_BLUE,
     fontWeight: '600',
-  },
-  successOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  successCard: {
-    width: '100%',
-    backgroundColor: colors.CARD_WHITE,
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    gap: 12,
-  },
-  successTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: colors.TEXT_DARK,
-    textAlign: 'center',
-  },
-  successText: {
-    fontSize: 14,
-    color: colors.TEXT_MEDIUM,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 2,
-  },
-  notifyContactsBtn: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderWidth: 1.5,
-    borderColor: colors.PRIMARY_BLUE,
-    backgroundColor: colors.CHIP_ACTIVE_BG,
-    borderRadius: 100,
-    paddingVertical: 12,
-    marginTop: 4,
-  },
-  notifyContactsText: {
-    color: colors.PRIMARY_BLUE,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  noContactsText: {
-    color: colors.TEXT_MEDIUM,
-    fontSize: 13,
-  },
-  continueStatusBtn: {
-    width: '100%',
-    minHeight: 52,
-    borderRadius: 14,
-    backgroundColor: colors.PRIMARY_BLUE,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  continueStatusBtnText: {
-    flexShrink: 1,
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-    textAlign: 'center',
   },
   warningCard: {
     backgroundColor: colors.WARNING_BG,

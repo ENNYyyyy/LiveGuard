@@ -336,30 +336,43 @@ class AlertHistoryTests(APITestCase):
 class CancelAlertTests(APITestCase):
     def setUp(self):
         self.user = create_user()
+        self.agency = create_agency(
+            name='Cancel Police',
+            agency_type='POLICE',
+            email='cancel_police@test.com',
+            phone='+2348010001234',
+        )
 
-    def _make_alert(self, status_val):
-        return EmergencyAlert.objects.create(
+    def _make_alert(self, status_val, with_assignment=True):
+        alert = EmergencyAlert.objects.create(
             user=self.user,
             alert_type='OTHER',
             priority_level='LOW',
             status=status_val,
         )
+        if with_assignment:
+            AlertAssignment.objects.create(alert=alert, agency=self.agency)
+        return alert
 
-    def test_cancel_alert_while_pending(self):
+    @patch('alerts.views.NotificationDispatcher.send_cancellation_notice')
+    def test_cancel_alert_while_pending(self, mock_send_cancellation_notice):
         alert = self._make_alert('PENDING')
         url = reverse('alert-cancel', args=[alert.alert_id])
         response = self.client.put(url, **auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         alert.refresh_from_db()
         self.assertEqual(alert.status, 'CANCELLED')
+        self.assertEqual(mock_send_cancellation_notice.call_count, alert.assignments.count())
 
-    def test_cancel_alert_while_dispatched(self):
+    @patch('alerts.views.NotificationDispatcher.send_cancellation_notice')
+    def test_cancel_alert_while_dispatched(self, mock_send_cancellation_notice):
         alert = self._make_alert('DISPATCHED')
         url = reverse('alert-cancel', args=[alert.alert_id])
         response = self.client.put(url, **auth_header(self.user))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         alert.refresh_from_db()
         self.assertEqual(alert.status, 'CANCELLED')
+        self.assertEqual(mock_send_cancellation_notice.call_count, alert.assignments.count())
 
     def test_cannot_cancel_resolved_alert(self):
         alert = self._make_alert('RESOLVED')
@@ -368,6 +381,30 @@ class CancelAlertTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         alert.refresh_from_db()
         self.assertEqual(alert.status, 'RESOLVED')
+
+    @patch('alerts.views.NotificationDispatcher.send_cancellation_notice')
+    def test_cancel_alert_notifies_assigned_agencies(self, mock_send_cancellation_notice):
+        alert = self._make_alert('DISPATCHED', with_assignment=False)
+        assignment = AlertAssignment.objects.create(alert=alert, agency=self.agency)
+
+        url = reverse('alert-cancel', args=[alert.alert_id])
+        response = self.client.put(url, **auth_header(self.user))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_send_cancellation_notice.assert_called_once()
+        called_assignment = mock_send_cancellation_notice.call_args[0][0]
+        self.assertEqual(called_assignment.assignment_id, assignment.assignment_id)
+
+    @patch('alerts.views.NotificationDispatcher.send_cancellation_notice')
+    def test_cancel_alert_with_no_assignments_still_succeeds(self, mock_send_cancellation_notice):
+        alert = self._make_alert('PENDING', with_assignment=False)
+        alert.assignments.all().delete()
+
+        url = reverse('alert-cancel', args=[alert.alert_id])
+        response = self.client.put(url, **auth_header(self.user))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_send_cancellation_notice.assert_not_called()
 
 
 class UpdateAlertLocationTests(APITestCase):
