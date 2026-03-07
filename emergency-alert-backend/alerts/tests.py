@@ -1,5 +1,6 @@
 from unittest.mock import patch
 from django.urls import reverse
+from django.core.cache import cache
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -549,3 +550,24 @@ class AlertCreationThrottleFallbackTests(APITestCase):
             rate = throttle.get_rate()
         self.assertIsNotNone(rate)
         self.assertIn('/', rate)
+
+
+class ThrottleResponseHeaderTests(APITestCase):
+    url = reverse('alert-create')
+
+    def setUp(self):
+        cache.clear()
+        self.user = create_user(email='throttle@test.com', phone='+2348098888888')
+        create_agency('Police Force', 'POLICE', 'p2@test.com', '+2348012340000')
+
+    @patch('alerts.throttles.AlertCreationThrottle.get_rate', return_value='1/min')
+    @patch('alerts.views.NotificationDispatcher.dispatch_alert')
+    def test_429_includes_retry_after_header(self, _mock_dispatch, _mock_rate):
+        first = self.client.post(self.url, ALERT_PAYLOAD, format='json', **auth_header(self.user))
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+
+        second = self.client.post(self.url, ALERT_PAYLOAD, format='json', **auth_header(self.user))
+        self.assertEqual(second.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        retry_after = second.headers.get('Retry-After')
+        self.assertIsNotNone(retry_after)
+        self.assertGreaterEqual(int(retry_after), 1)

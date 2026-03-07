@@ -1,15 +1,21 @@
+import logging
 from datetime import timedelta
+from threading import Thread
 
 from django.utils import timezone
+from django.db import close_old_connections
 from django.db.models import Count, Avg, Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
+
+logger = logging.getLogger(__name__)
 
 from alert_system.permissions import IsAdminUser
 
-from agencies.models import SecurityAgency
+from agencies.models import SecurityAgency, AgencyUser
 from alerts.models import EmergencyAlert, AlertAssignment
 from accounts.models import User
 from notifications.models import NotificationLog
@@ -20,6 +26,7 @@ from .serializers import (
     AgencyListSerializer,
     AgencyDetailSerializer,
     AgencyCreateUpdateSerializer,
+    AgencyStaffCreateSerializer,
     AlertListAdminSerializer,
     AlertDetailAdminSerializer,
     CivilianUserSerializer,
@@ -57,6 +64,83 @@ def _parse_bool(value):
     return None, '"is_active" must be a boolean (true/false) or equivalent string (yes/no, on/off, 1/0).'
 
 
+class AdminPageNumberPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+def _run_broadcast_job(channel, title, message):
+    """
+    Background broadcast worker.
+    Runs in a daemon thread so HTTP request returns immediately.
+    """
+    close_old_connections()
+    sent = 0
+    failed = 0
+    try:
+        civilians = User.objects.filter(is_staff=False, is_superuser=False, is_active=True)
+        dispatcher = NotificationDispatcher()
+
+        if channel == 'PUSH':
+            targets = civilians.exclude(push_token__isnull=True).exclude(push_token='')
+            for user in targets:
+                try:
+                    dispatcher._send_expo_push(
+                        token=user.push_token,
+                        title=title,
+                        body=message,
+                        data={'type': 'BROADCAST'},
+                    )
+                    sent += 1
+                except Exception as exc:
+                    failed += 1
+                    logger.error(f"Broadcast push failed for {user.email}: {exc}")
+
+        elif channel == 'SMS':
+            targets = civilians.exclude(phone_number__isnull=True).exclude(phone_number='')
+            for user in targets:
+                try:
+                    from twilio.rest import Client
+                    from decouple import config
+                    Client(
+                        config('TWILIO_ACCOUNT_SID'),
+                        config('TWILIO_AUTH_TOKEN'),
+                    ).messages.create(
+                        body=f"{title}\n{message}",
+                        from_=config('TWILIO_PHONE_NUMBER'),
+                        to=user.phone_number,
+                    )
+                    sent += 1
+                except Exception as exc:
+                    failed += 1
+                    logger.error(f"Broadcast SMS failed for {user.phone_number}: {exc}")
+
+        elif channel == 'EMAIL':
+            from django.core.mail import send_mail
+            from decouple import config
+            from_email = config('DEFAULT_FROM_EMAIL', default='noreply@liveguard.app')
+            targets = civilians.exclude(email__isnull=True).exclude(email='')
+            for user in targets:
+                try:
+                    send_mail(title, message, from_email, [user.email], fail_silently=False)
+                    sent += 1
+                except Exception as exc:
+                    failed += 1
+                    logger.error(f"Broadcast email failed for {user.email}: {exc}")
+
+        logger.info(
+            "Broadcast job completed channel=%s sent=%s failed=%s",
+            channel,
+            sent,
+            failed,
+        )
+    except Exception:
+        logger.exception("Broadcast job crashed channel=%s", channel)
+    finally:
+        close_old_connections()
+
+
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 
 class DashboardView(APIView):
@@ -66,7 +150,18 @@ class DashboardView(APIView):
         now = timezone.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        alerts = EmergencyAlert.objects.all()
+        all_alerts = EmergencyAlert.objects.all()
+
+        # Apply date_range filter for breakdown cards
+        date_range = request.query_params.get('date_range', 'all')
+        if date_range == 'today':
+            alerts = all_alerts.filter(created_at__gte=today_start)
+        elif date_range == '7d':
+            alerts = all_alerts.filter(created_at__gte=now - timedelta(days=7))
+        elif date_range == '30d':
+            alerts = all_alerts.filter(created_at__gte=now - timedelta(days=30))
+        else:
+            alerts = all_alerts
 
         # Average agency response time (assigned_at → response_time)
         responded = AlertAssignment.objects.filter(response_time__isnull=False)
@@ -80,9 +175,9 @@ class DashboardView(APIView):
 
         return Response({
             'totals': {
-                'alerts_all_time':  alerts.count(),
-                'alerts_today':     alerts.filter(created_at__gte=today_start).count(),
-                'alerts_this_week': alerts.filter(created_at__gte=now - timedelta(days=7)).count(),
+                'alerts_all_time':  all_alerts.count(),
+                'alerts_today':     all_alerts.filter(created_at__gte=today_start).count(),
+                'alerts_this_week': all_alerts.filter(created_at__gte=now - timedelta(days=7)).count(),
                 'agencies_total':   SecurityAgency.objects.count(),
                 'agencies_active':  SecurityAgency.objects.filter(is_active=True).count(),
                 'civilian_users':   User.objects.filter(is_staff=False, is_superuser=False).count(),
@@ -178,6 +273,49 @@ class AgencyDetailView(APIView):
         )
 
 
+class AgencyStaffView(APIView):
+    """Create a new staff member and link them to the agency."""
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def _get_agency(self, agency_id):
+        try:
+            return SecurityAgency.objects.prefetch_related('staff__user', 'assignments').get(agency_id=agency_id)
+        except SecurityAgency.DoesNotExist:
+            return None
+
+    def post(self, request, agency_id):
+        agency = self._get_agency(agency_id)
+        if not agency:
+            return Response({'error': 'Agency not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = AgencyStaffCreateSerializer(data=request.data, context={'agency': agency})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save()
+        agency = self._get_agency(agency_id)
+        return Response(AgencyDetailSerializer(agency).data, status=status.HTTP_201_CREATED)
+
+
+class AgencyStaffDetailView(APIView):
+    """Remove a staff member from an agency and delete their account."""
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def delete(self, request, agency_id, user_id):
+        try:
+            agency_user = AgencyUser.objects.select_related('user').get(
+                agency__agency_id=agency_id, user__user_id=user_id
+            )
+        except AgencyUser.DoesNotExist:
+            return Response({'error': 'Staff member not found.'}, status=status.HTTP_404_NOT_FOUND)
+        user = agency_user.user
+        user.delete()  # cascades to AgencyUser
+        agency = (
+            SecurityAgency.objects
+            .prefetch_related('staff__user', 'assignments')
+            .get(agency_id=agency_id)
+        )
+        return Response(AgencyDetailSerializer(agency).data)
+
+
 # ─── Alert management ────────────────────────────────────────────────────────
 
 class AlertListView(APIView):
@@ -197,8 +335,23 @@ class AlertListView(APIView):
             qs = qs.filter(alert_type=t)
         if p := request.query_params.get('priority'):
             qs = qs.filter(priority_level=p)
+        if raw_search := request.query_params.get('search'):
+            search = raw_search.strip()
+            if search:
+                search_filter = (
+                    Q(alert_type__icontains=search) |
+                    Q(status__icontains=search) |
+                    Q(user__full_name__icontains=search) |
+                    Q(location__address__icontains=search)
+                )
+                if search.isdigit():
+                    search_filter |= Q(alert_id=int(search))
+                qs = qs.filter(search_filter)
 
-        return Response(AlertListAdminSerializer(qs, many=True).data)
+        paginator = AdminPageNumberPagination()
+        page = paginator.paginate_queryset(qs, request, view=self)
+        serializer = AlertListAdminSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 class AlertDetailView(APIView):
@@ -334,7 +487,61 @@ class NotificationLogListView(APIView):
             qs = qs.filter(delivery_status=st.upper())
         if aid := request.query_params.get('assignment'):
             qs = qs.filter(assignment_id=aid)
-        return Response(NotificationLogSerializer(qs, many=True).data)
+
+        paginator = AdminPageNumberPagination()
+        page = paginator.paginate_queryset(qs, request, view=self)
+        serializer = NotificationLogSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+# ─── Broadcast notification ───────────────────────────────────────────────────
+
+class BroadcastNotificationView(APIView):
+    """
+    POST /api/admin/notifications/broadcast/
+    Send a push / SMS / email notification to all active civilian users.
+    Body: { "title": "...", "message": "...", "channel": "PUSH"|"SMS"|"EMAIL" }
+    """
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def post(self, request):
+        title   = (request.data.get('title')   or '').strip()
+        message = (request.data.get('message') or '').strip()
+        channel = (request.data.get('channel') or 'PUSH').upper()
+
+        if not title or not message:
+            return Response(
+                {'error': 'title and message are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if channel not in ('PUSH', 'SMS', 'EMAIL'):
+            return Response(
+                {'error': 'channel must be PUSH, SMS, or EMAIL.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        civilians = User.objects.filter(is_staff=False, is_superuser=False, is_active=True)
+        if channel == 'PUSH':
+            target_count = civilians.exclude(push_token__isnull=True).exclude(push_token='').count()
+        elif channel == 'SMS':
+            target_count = civilians.exclude(phone_number__isnull=True).exclude(phone_number='').count()
+        else:
+            target_count = civilians.exclude(email__isnull=True).exclude(email='').count()
+
+        thread = Thread(
+            target=_run_broadcast_job,
+            args=(channel, title, message),
+            daemon=True,
+            name=f"broadcast-{channel.lower()}",
+        )
+        thread.start()
+
+        return Response({
+            'channel': channel,
+            'queued': True,
+            'target_count': target_count,
+            'message': f"Broadcast queued for {target_count} recipients.",
+        }, status=status.HTTP_202_ACCEPTED)
 
 
 # ─── Reports ──────────────────────────────────────────────────────────────────

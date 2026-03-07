@@ -23,7 +23,7 @@ def validate_nigerian_phone(value):
 class LocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Location
-        fields = ['location_id', 'latitude', 'longitude', 'accuracy', 'address', 'captured_at']
+        fields = ['location_id', 'latitude', 'longitude', 'accuracy', 'altitude', 'address', 'city', 'state', 'captured_at']
         read_only_fields = ['location_id', 'captured_at']
 
 
@@ -46,7 +46,7 @@ class AgencyNestedSerializer(serializers.Serializer):
 class NotificationLogLiteSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationLog
-        fields = ['channel_type', 'delivery_status', 'sent_at', 'retry_count']
+        fields = ['channel_type', 'delivery_status', 'sent_at', 'retry_count', 'error_message']
 
 
 class AlertAssignmentSerializer(serializers.ModelSerializer):
@@ -56,12 +56,18 @@ class AlertAssignmentSerializer(serializers.ModelSerializer):
     alert_type = serializers.CharField(source='alert.alert_type', read_only=True)
     alert_priority_level = serializers.CharField(source='alert.priority_level', read_only=True)
     alert_status = serializers.CharField(source='alert.status', read_only=True)
+    alert_updated_at = serializers.DateTimeField(source='alert.updated_at', read_only=True)
+    alert_description = serializers.CharField(source='alert.description', read_only=True, allow_null=True)
+    reporter_name = serializers.CharField(source='alert.user.full_name', read_only=True, allow_null=True)
+    reporter_phone = serializers.CharField(source='alert.user.phone_number', read_only=True, allow_null=True)
     notification_logs = NotificationLogLiteSerializer(source='notifications', many=True, read_only=True)
 
     class Meta:
         model = AlertAssignment
         fields = [
             'assignment_id', 'alert_id', 'alert_type', 'alert_priority_level', 'alert_status',
+            'alert_updated_at',
+            'alert_description', 'reporter_name', 'reporter_phone',
             'agency', 'assigned_at',
             'notification_status', 'response_time',
             'assignment_priority', 'acknowledgment', 'notification_logs',
@@ -73,11 +79,14 @@ class EmergencyAlertCreateSerializer(serializers.ModelSerializer):
     latitude = serializers.DecimalField(max_digits=10, decimal_places=7, write_only=True)
     longitude = serializers.DecimalField(max_digits=10, decimal_places=7, write_only=True)
     accuracy = serializers.FloatField(write_only=True, required=False, allow_null=True)
+    altitude = serializers.FloatField(write_only=True, required=False, allow_null=True)
+    city = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True, max_length=100)
+    state = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True, max_length=100)
     risk_answers = serializers.JSONField(write_only=True)
 
     class Meta:
         model = EmergencyAlert
-        fields = ['alert_type', 'description', 'risk_answers', 'latitude', 'longitude', 'accuracy']
+        fields = ['alert_type', 'description', 'risk_answers', 'latitude', 'longitude', 'accuracy', 'altitude', 'city', 'state']
 
     def validate_alert_type(self, value):
         valid = [choice[0] for choice in EmergencyAlert.ALERT_TYPES]
@@ -115,6 +124,9 @@ class EmergencyAlertCreateSerializer(serializers.ModelSerializer):
         latitude = validated_data.pop('latitude')
         longitude = validated_data.pop('longitude')
         accuracy = validated_data.pop('accuracy', None)
+        altitude = validated_data.pop('altitude', None)
+        city = validated_data.pop('city', None)
+        state = validated_data.pop('state', None)
         validated_data.pop('risk_answers', None)
         priority_assessment = validated_data.pop('_priority_assessment')
         validated_data['priority_level'] = priority_assessment['priority_level']
@@ -127,6 +139,9 @@ class EmergencyAlertCreateSerializer(serializers.ModelSerializer):
             latitude=latitude,
             longitude=longitude,
             accuracy=accuracy,
+            altitude=altitude,
+            city=city,
+            state=state,
         )
 
         return alert
@@ -143,9 +158,10 @@ class EmergencyAlertDetailSerializer(serializers.ModelSerializer):
         model = EmergencyAlert
         fields = [
             'alert_id', 'alert_type', 'priority_level', 'description',
-            'status', 'rating', 'created_at', 'updated_at', 'location', 'assignments',
+            'status', 'rating', 'resolved_at', 'resolved_by',
+            'created_at', 'updated_at', 'location', 'assignments',
         ]
-        read_only_fields = ['alert_id', 'status', 'rating', 'created_at', 'updated_at']
+        read_only_fields = ['alert_id', 'status', 'rating', 'resolved_at', 'resolved_by', 'created_at', 'updated_at']
 
 
 class EmergencyAlertListSerializer(serializers.ModelSerializer):

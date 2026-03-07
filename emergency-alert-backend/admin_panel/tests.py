@@ -7,6 +7,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from accounts.models import User
 from agencies.models import SecurityAgency
 from alerts.models import EmergencyAlert, Location, AlertAssignment
+from notifications.models import NotificationLog
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -182,21 +183,22 @@ class AlertListTests(APITestCase):
     def test_list_all_alerts(self):
         resp = self.client.get(self.url, **auth(self.admin))
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(resp.data), 2)
+        self.assertEqual(resp.data['count'], 2)
+        self.assertEqual(len(resp.data['results']), 2)
 
     def test_filter_by_status(self):
         resp = self.client.get(self.url + '?status=PENDING', **auth(self.admin))
-        self.assertEqual(len(resp.data), 1)
-        self.assertEqual(resp.data[0]['status'], 'PENDING')
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['status'], 'PENDING')
 
     def test_filter_by_type(self):
         resp = self.client.get(self.url + '?type=FIRE_INCIDENCE', **auth(self.admin))
-        self.assertEqual(len(resp.data), 1)
-        self.assertEqual(resp.data[0]['alert_type'], 'FIRE_INCIDENCE')
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['alert_type'], 'FIRE_INCIDENCE')
 
     def test_filter_by_priority(self):
         resp = self.client.get(self.url + '?priority=HIGH', **auth(self.admin))
-        self.assertEqual(len(resp.data), 2)
+        self.assertEqual(resp.data['count'], 2)
 
 
 class AlertDetailTests(APITestCase):
@@ -424,3 +426,71 @@ class CivilianUserDetailTests(APITestCase):
             **auth(self.civilian),
         )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class NotificationLogListTests(APITestCase):
+    def setUp(self):
+        self.admin = make_admin()
+        self.user = make_user()
+        self.agency = make_agency()
+        self.alert = make_alert(self.user)
+        self.assignment = AlertAssignment.objects.create(alert=self.alert, agency=self.agency)
+        self.other_alert = make_alert(self.user, alert_type='FIRE_INCIDENCE')
+        self.other_assignment = AlertAssignment.objects.create(alert=self.other_alert, agency=self.agency)
+        self.url = reverse('admin-notification-logs')
+
+        for i in range(30):
+            NotificationLog.objects.create(
+                assignment=self.assignment,
+                channel_type='SMS',
+                recipient=f'+234800000{1000 + i}',
+                delivery_status='SENT',
+                retry_count=0,
+            )
+        NotificationLog.objects.create(
+            assignment=self.other_assignment,
+            channel_type='PUSH',
+            recipient='ExponentPushToken[abc]',
+            delivery_status='FAILED',
+            retry_count=1,
+            error_message='Token invalid',
+        )
+
+    def test_notification_logs_are_paginated(self):
+        resp = self.client.get(self.url, **auth(self.admin))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertIn('count', resp.data)
+        self.assertIn('results', resp.data)
+        self.assertEqual(resp.data['count'], 31)
+        self.assertLessEqual(len(resp.data['results']), 20)
+
+    def test_notification_log_assignment_filter(self):
+        resp = self.client.get(
+            f"{self.url}?assignment={self.other_assignment.assignment_id}",
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['assignment_id'], self.other_assignment.assignment_id)
+
+
+class BroadcastNotificationTests(APITestCase):
+    def setUp(self):
+        self.admin = make_admin()
+        self.user = make_user('push@test.com', '+2348033333333')
+        self.user.push_token = 'ExponentPushToken[abc123]'
+        self.user.save(update_fields=['push_token'])
+        self.url = reverse('admin-notification-broadcast')
+
+    @patch('admin_panel.views.Thread')
+    def test_broadcast_is_queued_async(self, mock_thread):
+        resp = self.client.post(
+            self.url,
+            {'title': 'Notice', 'message': 'Test message', 'channel': 'PUSH'},
+            format='json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_202_ACCEPTED)
+        self.assertTrue(resp.data['queued'])
+        self.assertEqual(resp.data['target_count'], 1)
+        mock_thread.return_value.start.assert_called_once()

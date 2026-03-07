@@ -23,8 +23,20 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'user': '100000/hour',
         'alert_creation': '100000/hour',
+        'agency_poll': '100000/hour',
     },
 }
 
 # Keep tests deterministic and avoid thread timing issues under SQLite.
 ALERT_DISPATCH_ASYNC = False
+
+# Suppress expected DB-fallback warning from AlertCreationThrottle (SystemSetting
+# row does not exist in the test DB, so the warning fires on every throttle check).
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {'null': {'class': 'logging.NullHandler'}},
+    'loggers': {
+        'alerts.throttles': {'handlers': ['null'], 'propagate': False},
+    },
+}

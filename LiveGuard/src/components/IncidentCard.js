@@ -92,4 +92,8 @@ const makeStyles = (colors) => StyleSheet.create({
   },
 });
 
-export default IncidentCard;
+export default React.memo(IncidentCard, (prev, next) =>
+  prev.incident.alert_id === next.incident.alert_id &&
+  prev.incident.status === next.incident.status &&
+  prev.incident.created_at === next.incident.created_at
+);

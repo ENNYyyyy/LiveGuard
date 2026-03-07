@@ -41,6 +41,8 @@ def make_alert_with_assignment(civilian, agency, alert_status='DISPATCHED'):
     )
     Location.objects.create(alert=alert, latitude='6.5244', longitude='3.3792')
     assignment = AlertAssignment.objects.create(alert=alert, agency=agency)
+    if alert_status in ('ACKNOWLEDGED', 'RESPONDING', 'RESOLVED'):
+        Acknowledgment.objects.create(assignment=assignment, acknowledged_by='Test Dispatcher')
     return alert, assignment
 
 
@@ -153,6 +155,11 @@ class UpdateAlertStatusTests(APITestCase):
 
     @patch('agencies.views.NotificationDispatcher')
     def test_update_to_resolved(self, mock_dispatcher):
+        first = self.client.put(
+            self.status_url(), {'status': 'RESPONDING'}, **auth_header(self.officer)
+        )
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+
         response = self.client.put(
             self.status_url(), {'status': 'RESOLVED'}, **auth_header(self.officer)
         )

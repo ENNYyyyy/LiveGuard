@@ -14,7 +14,7 @@ import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch, useSelector } from 'react-redux';
-import { createEmergencyAlert, fetchAlertHistory, fetchPriorityQuestions } from '../../store/alertSlice';
+import { createEmergencyAlert, fetchAlertHistory, fetchPriorityQuestions, loadQuestionsFromCache } from '../../store/alertSlice';
 import { getCurrentPosition } from '../../services/locationService';
 import ChipSelector from '../../components/ChipSelector';
 import PrimaryButton from '../../components/PrimaryButton';
@@ -35,6 +35,7 @@ const EmergencyAlertScreen = ({ navigation }) => {
   const priorityQuestions = useSelector((state) => state.alert.priorityQuestions);
   const questionsLoading = useSelector((state) => state.alert.questionsLoading);
   const questionsError = useSelector((state) => state.alert.questionsError);
+  const questionsCache = useSelector((state) => state.alert.questionsCache);
   const { isConnected } = useNetInfo();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -64,6 +65,8 @@ const EmergencyAlertScreen = ({ navigation }) => {
   }, [rateLimitUntil]);
 
   const lastSelectedTypeRef = useRef(null);
+  const questionsCacheRef = useRef(questionsCache);
+  useEffect(() => { questionsCacheRef.current = questionsCache; }, [questionsCache]);
   // Start fetching location immediately on mount so it's ready (or nearly ready)
   // by the time the user finishes filling the form and taps submit.
   const locationPrefetchRef = useRef(null);
@@ -104,7 +107,12 @@ const EmergencyAlertScreen = ({ navigation }) => {
       setQuestionErrors({});
     }
     lastSelectedTypeRef.current = selectedType;
-    dispatch(fetchPriorityQuestions(selectedType));
+    const cached = questionsCacheRef.current[selectedType];
+    if (cached) {
+      dispatch(loadQuestionsFromCache({ questions: cached.questions, version: cached.version }));
+    } else {
+      dispatch(fetchPriorityQuestions(selectedType));
+    }
   }, [dispatch, selectedType]);
 
   const validate = () => {
@@ -182,6 +190,9 @@ const EmergencyAlertScreen = ({ navigation }) => {
         latitude: parseFloat(locationData.latitude.toFixed(7)),
         longitude: parseFloat(locationData.longitude.toFixed(7)),
         accuracy: locationData.accuracy,
+        altitude: locationData.altitude ?? null,
+        city: locationData.city ?? null,
+        state: locationData.state ?? null,
       };
 
       const result = await dispatch(createEmergencyAlert(alertPayload));

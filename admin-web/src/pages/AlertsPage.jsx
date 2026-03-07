@@ -4,22 +4,38 @@ import ShellLayout from '../components/ShellLayout';
 import { fetchAlerts } from '../api/admin';
 import { parseApiError } from '../api/errors';
 
-const STATUSES  = ['', 'PENDING', 'DISPATCHED', 'ACKNOWLEDGED', 'RESPONDING', 'RESOLVED', 'CANCELLED'];
-const TYPES     = ['', 'TERRORISM', 'BANDITRY', 'KIDNAPPING', 'ARMED_ROBBERY', 'ROBBERY', 'FIRE_INCIDENCE', 'ACCIDENT', 'OTHER'];
+const STATUSES = ['', 'PENDING', 'DISPATCHED', 'ACKNOWLEDGED', 'RESPONDING', 'RESOLVED', 'CANCELLED'];
+const TYPES = ['', 'TERRORISM', 'BANDITRY', 'KIDNAPPING', 'ARMED_ROBBERY', 'ROBBERY', 'FIRE_INCIDENCE', 'ACCIDENT', 'OTHER'];
 const PRIORITIES = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+const PAGE_SIZE = 20;
 
 const AlertsPage = () => {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filters, setFilters] = useState({ status: '', type: '', priority: '' });
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      const data = await fetchAlerts(filters);
-      setAlerts(Array.isArray(data) ? data : data?.results || []);
+      const data = await fetchAlerts({
+        ...filters,
+        search: search.trim() || undefined,
+        page,
+        page_size: PAGE_SIZE,
+      });
+
+      const rows = Array.isArray(data) ? data : (data?.results || []);
+      const count = Array.isArray(data) ? rows.length : Number(data?.count ?? rows.length);
+
+      setAlerts(rows);
+      setTotalCount(count);
+      setTotalPages(Math.max(1, Math.ceil(count / PAGE_SIZE)));
     } catch (err) {
       setError(parseApiError(err, 'Failed to load alerts.'));
     } finally {
@@ -27,9 +43,34 @@ const AlertsPage = () => {
     }
   };
 
-  useEffect(() => { load(); }, [filters]);
+  useEffect(() => { load(); }, [filters, search, page]);
 
-  const setFilter = (key) => (e) => setFilters((prev) => ({ ...prev, [key]: e.target.value }));
+  const setFilter = (key) => (e) => {
+    setFilters((prev) => ({ ...prev, [key]: e.target.value }));
+    setPage(1);
+  };
+
+  const exportCsv = () => {
+    const headers = ['ID', 'Type', 'Priority', 'Status', 'Reporter', 'Address', 'Created', 'Assignments'];
+    const rows = alerts.map((a) => [
+      a.alert_id,
+      a.alert_type,
+      a.priority_level,
+      a.status,
+      (a.reporter?.full_name || '').replace(/,/g, ' '),
+      (a.address || '').replace(/,/g, ' '),
+      new Date(a.created_at).toLocaleString(),
+      a.assignment_count ?? 0,
+    ]);
+    const csv = [headers, ...rows].map((r) => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `alerts-page-${page}-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <ShellLayout>
@@ -37,11 +78,28 @@ const AlertsPage = () => {
         <div className="panel-header">
           <div>
             <h2>Alerts</h2>
-            <p>All emergency alerts across the system.</p>
+            <p>
+              All emergency alerts across the system.
+              {totalCount > 0 && ` ${totalCount} result${totalCount !== 1 ? 's' : ''}`}
+            </p>
           </div>
-          <button type="button" className="ghost-btn" onClick={load} disabled={loading}>
-            {loading ? 'Loading...' : 'Refresh'}
-          </button>
+          <div className="panel-actions">
+            <button type="button" className="ghost-btn" onClick={exportCsv} disabled={alerts.length === 0} title="Export current page as CSV">
+              Export CSV
+            </button>
+            <button type="button" className="ghost-btn" onClick={load} disabled={loading}>
+              {loading ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+
+        <div className="search-row">
+          <input
+            type="search"
+            placeholder="Search by ID, type, status, reporter, address…"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+          />
         </div>
 
         <div className="filter-bar">
@@ -66,38 +124,47 @@ const AlertsPage = () => {
         ) : alerts.length === 0 ? (
           <div className="list-state">No alerts match the selected filters.</div>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Type</th>
-                  <th>Priority</th>
-                  <th>Status</th>
-                  <th>Reporter</th>
-                  <th>Address</th>
-                  <th>Created</th>
-                  <th>Assignments</th>
-                </tr>
-              </thead>
-              <tbody>
-                {alerts.map((alert) => (
-                  <tr key={alert.alert_id}>
-                    <td><Link to={`/alerts/${alert.alert_id}`}>#{alert.alert_id}</Link></td>
-                    <td><span className="badge type">{alert.alert_type}</span></td>
-                    <td><span className={`badge ${(alert.priority_level || '').toLowerCase()}`}>{alert.priority_level}</span></td>
-                    <td><span className={`badge ${(alert.status || '').toLowerCase()}`}>{alert.status}</span></td>
-                    <td>{alert.reporter?.full_name || '—'}</td>
-                    <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {alert.address || '—'}
-                    </td>
-                    <td>{new Date(alert.created_at).toLocaleString()}</td>
-                    <td style={{ textAlign: 'center' }}>{alert.assignment_count ?? 0}</td>
+          <>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Type</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Reporter</th>
+                    <th>Address</th>
+                    <th>Created</th>
+                    <th>Assignments</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {alerts.map((alert) => (
+                    <tr key={alert.alert_id}>
+                      <td><Link to={`/alerts/${alert.alert_id}`}>#{alert.alert_id}</Link></td>
+                      <td><span className="badge type">{alert.alert_type}</span></td>
+                      <td><span className={`badge ${(alert.priority_level || '').toLowerCase()}`}>{alert.priority_level}</span></td>
+                      <td><span className={`badge ${(alert.status || '').toLowerCase()}`}>{alert.status}</span></td>
+                      <td>{alert.reporter?.full_name || '—'}</td>
+                      <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {alert.address || '—'}
+                      </td>
+                      <td>{new Date(alert.created_at).toLocaleString()}</td>
+                      <td style={{ textAlign: 'center' }}>{alert.assignment_count ?? 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {totalPages > 1 && (
+              <div className="pagination">
+                <button className="page-btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>← Prev</button>
+                <span className="page-info">Page {page} of {totalPages}</span>
+                <button className="page-btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Next →</button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </ShellLayout>

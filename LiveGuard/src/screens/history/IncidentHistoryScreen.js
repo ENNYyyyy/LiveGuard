@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useMemo } from 'react';
+import React, { useCallback, useState, useMemo, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -188,7 +188,7 @@ const StatItem = ({ label, value, onPress, active, colors }) => (
 // ── Screen ─────────────────────────────────────────────────────────────────────
 const IncidentHistoryScreen = ({ navigation }) => {
   const dispatch = useDispatch();
-  const { alertHistory, loading, historyError } = useSelector((state) => state.alert);
+  const { alertHistory, loading, historyError, historyLastFetched } = useSelector((state) => state.alert);
   const { isConnected } = useNetInfo();
   const [refreshing, setRefreshing] = useState(false);
   const [selectedMonth, setSelectedMonth]   = useState(null); // month key string
@@ -202,7 +202,15 @@ const IncidentHistoryScreen = ({ navigation }) => {
 
   const doFetch = useCallback(() => dispatch(fetchAlertHistory()), [dispatch]);
 
-  useFocusEffect(useCallback(() => { doFetch(); }, [doFetch]));
+  const historyLastFetchedRef = useRef(historyLastFetched);
+  useEffect(() => { historyLastFetchedRef.current = historyLastFetched; }, [historyLastFetched]);
+
+  const STALE_MS = 30_000;
+  useFocusEffect(useCallback(() => {
+    if (!historyLastFetchedRef.current || Date.now() - historyLastFetchedRef.current > STALE_MS) {
+      doFetch();
+    }
+  }, [doFetch]));
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -436,6 +444,10 @@ const IncidentHistoryScreen = ({ navigation }) => {
             showsVerticalScrollIndicator={false}
             refreshing={refreshing}
             onRefresh={onRefresh}
+            removeClippedSubviews={true}
+            maxToRenderPerBatch={8}
+            initialNumToRender={10}
+            windowSize={5}
           />
         </>
       )}

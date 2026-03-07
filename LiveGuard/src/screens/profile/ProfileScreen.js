@@ -69,7 +69,7 @@ const profileToastStyles = StyleSheet.create({
 });
 
 // ── Screen ─────────────────────────────────────────────────────────────────────
-const ProfileScreen = () => {
+const ProfileScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const user = useSelector((state) => state.auth.user);
   const loading = useSelector((state) => state.auth.loading);
@@ -135,7 +135,7 @@ const ProfileScreen = () => {
         <Text style={[styles.menuLabel, danger && { color: colors.SOS_RED }]}>{label}</Text>
         {value && <Text style={styles.menuValue}>{value}</Text>}
       </View>
-      {!danger && <Ionicons name="chevron-forward" size={18} color={colors.PLACEHOLDER_GREY} />}
+      {!danger && !!onPress && <Ionicons name="chevron-forward" size={18} color={colors.PLACEHOLDER_GREY} />}
     </TouchableOpacity>
   );
 
@@ -256,17 +256,17 @@ const ProfileScreen = () => {
           <MenuItem
             icon={<Ionicons name="notifications-outline" size={20} color={colors.TEXT_MEDIUM} />}
             label="Notifications"
-            onPress={() => {}}
+            onPress={() => navigation.navigate('SettingsScreen', { section: 'notifications' })}
           />
           <MenuItem
             icon={<Ionicons name="location-outline" size={20} color={colors.TEXT_MEDIUM} />}
             label="Location Settings"
-            onPress={() => {}}
+            onPress={() => navigation.navigate('SettingsScreen', { section: 'location' })}
           />
           <MenuItem
             icon={<Ionicons name="moon-outline" size={20} color={colors.TEXT_MEDIUM} />}
             label="Appearance"
-            onPress={() => {}}
+            onPress={() => navigation.navigate('SettingsScreen', { section: 'appearance' })}
           />
         </View>
 
@@ -276,23 +276,22 @@ const ProfileScreen = () => {
           <MenuItem
             icon={<Ionicons name="help-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
             label="Help & FAQ"
-            onPress={() => {}}
+            onPress={() => navigation.navigate('FaqScreen')}
           />
           <MenuItem
             icon={<Ionicons name="document-text-outline" size={20} color={colors.TEXT_MEDIUM} />}
             label="Privacy Policy"
-            onPress={() => {}}
+            onPress={() => navigation.navigate('LegalScreen', { type: 'privacy' })}
           />
           <MenuItem
             icon={<Ionicons name="reader-outline" size={20} color={colors.TEXT_MEDIUM} />}
             label="Terms of Service"
-            onPress={() => {}}
+            onPress={() => navigation.navigate('LegalScreen', { type: 'terms' })}
           />
           <MenuItem
             icon={<Ionicons name="information-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
             label="App Version"
             value="1.0.0"
-            onPress={() => {}}
           />
         </View>
 

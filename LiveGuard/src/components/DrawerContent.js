@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, Switch, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Switch, StyleSheet, Share } from 'react-native';
 import { DrawerContentScrollView } from '@react-navigation/drawer';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useDispatch, useSelector } from 'react-redux';
@@ -58,13 +58,17 @@ const DrawerContent = (props) => {
       <MenuItem
         icon={<Ionicons name="notifications-outline" size={22} color={colors.TEXT_MEDIUM} />}
         label="Notification"
-        onPress={() => {}}
+        onPress={() => props.navigation.navigate('SettingsScreen')}
         colors={colors}
       />
       <MenuItem
         icon={<Ionicons name="people-outline" size={22} color={colors.TEXT_MEDIUM} />}
         label="Invite friends"
-        onPress={() => {}}
+        onPress={async () => {
+          try {
+            await Share.share({ message: 'Stay safe with LiveGuard — the emergency alert app. Download it now!' });
+          } catch {}
+        }}
         colors={colors}
       />
 

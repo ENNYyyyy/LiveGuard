@@ -3,12 +3,15 @@ from .views import (
     DashboardView,
     AgencyListCreateView,
     AgencyDetailView,
+    AgencyStaffView,
+    AgencyStaffDetailView,
     AlertListView,
     AlertDetailView,
     AlertAssignView,
     CivilianUserListView,
     CivilianUserDetailView,
     NotificationLogListView,
+    BroadcastNotificationView,
     ReportsView,
     SystemSettingsView,
 )
@@ -20,6 +23,8 @@ urlpatterns = [
     # Agency management
     path('agencies/', AgencyListCreateView.as_view(), name='admin-agency-list'),
     path('agencies/<int:agency_id>/', AgencyDetailView.as_view(), name='admin-agency-detail'),
+    path('agencies/<int:agency_id>/staff/', AgencyStaffView.as_view(), name='admin-agency-staff'),
+    path('agencies/<int:agency_id>/staff/<int:user_id>/', AgencyStaffDetailView.as_view(), name='admin-agency-staff-detail'),
 
     # Alert management
     path('alerts/', AlertListView.as_view(), name='admin-alert-list'),
@@ -30,8 +35,9 @@ urlpatterns = [
     path('users/', CivilianUserListView.as_view(), name='admin-user-list'),
     path('users/<int:user_id>/', CivilianUserDetailView.as_view(), name='admin-user-detail'),
 
-    # Notification audit trail
+    # Notification audit trail + broadcast
     path('notifications/', NotificationLogListView.as_view(), name='admin-notification-logs'),
+    path('notifications/broadcast/', BroadcastNotificationView.as_view(), name='admin-notification-broadcast'),
 
     # Aggregated reports
     path('reports/', ReportsView.as_view(), name='admin-reports'),

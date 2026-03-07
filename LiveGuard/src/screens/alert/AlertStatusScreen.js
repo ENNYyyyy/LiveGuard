@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -112,6 +112,9 @@ const AlertStatusScreen = ({ navigation, route }) => {
   const isFocused = useIsFocused();
   const locationSubscription = useRef(null);
   const toastTimer = useRef(null);
+  const pollTimerRef = useRef(null);
+  const lastStatusRef = useRef(null);
+  const unchangedSinceRef = useRef(Date.now());
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
@@ -151,18 +154,38 @@ const AlertStatusScreen = ({ navigation, route }) => {
   const isTerminal = TERMINAL_STATUSES.includes(currentAlert?.status);
   const isCancellable = CANCELLABLE_STATUSES.includes(currentAlert?.status);
 
-  const doFetch = () => {
+  const doFetch = useCallback(() => {
     if (alertId) dispatch(fetchAlertStatus(alertId));
-  };
+  }, [alertId, dispatch]);
 
-  // ── Poll alert status ────────────────────────────────────────────────────────
+  // Track when status last changed to drive poll backoff
+  useEffect(() => {
+    if (currentAlert?.status && currentAlert.status !== lastStatusRef.current) {
+      lastStatusRef.current = currentAlert.status;
+      unchangedSinceRef.current = Date.now();
+    }
+  }, [currentAlert?.status]);
+
+  // ── Poll alert status with backoff ───────────────────────────────────────────
   useEffect(() => {
     if (!isFocused || !alertId) return;
     doFetch();
     if (isTerminal) return;
-    const interval = setInterval(doFetch, 5000);
-    return () => clearInterval(interval);
-  }, [isFocused, isTerminal, alertId]);
+
+    const schedule = () => {
+      const unchanged = Date.now() - unchangedSinceRef.current;
+      const delay = unchanged > 5 * 60_000 ? 30_000 : unchanged > 2 * 60_000 ? 15_000 : 5_000;
+      pollTimerRef.current = setTimeout(() => {
+        doFetch();
+        schedule();
+      }, delay);
+    };
+
+    schedule();
+    return () => {
+      if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    };
+  }, [isFocused, isTerminal, alertId, doFetch]);
 
   // ── 60-second cancel countdown ───────────────────────────────────────────────
   useEffect(() => {
@@ -244,12 +267,12 @@ const AlertStatusScreen = ({ navigation, route }) => {
   // Live ETA countdown
   const [etaRemaining, setEtaRemaining] = useState(null);
   useEffect(() => {
-    if (!firstAck?.estimated_arrival || !currentAlert?.created_at || currentAlert.status === 'RESOLVED') {
+    if (!firstAck?.estimated_arrival || !firstAck?.ack_timestamp || currentAlert.status === 'RESOLVED') {
       setEtaRemaining(null);
       return;
     }
     const etaSeconds = firstAck.estimated_arrival * 60;
-    const base = new Date(currentAlert.created_at).getTime();
+    const base = new Date(firstAck.ack_timestamp).getTime();
     const tick = () => {
       const elapsed = Math.floor((Date.now() - base) / 1000);
       const remaining = Math.max(0, etaSeconds - elapsed);
@@ -258,7 +281,7 @@ const AlertStatusScreen = ({ navigation, route }) => {
     tick();
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
-  }, [firstAck?.estimated_arrival, currentAlert?.created_at, currentAlert?.status]);
+  }, [firstAck?.estimated_arrival, firstAck?.ack_timestamp, currentAlert?.status]);
 
   const handleCancel = () => {
     Alert.alert('Cancel Alert', 'Are you sure you want to cancel this alert?', [

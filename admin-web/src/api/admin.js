@@ -1,7 +1,14 @@
 import client from './client';
 
-export const fetchDashboard = async () => {
-  const response = await client.get('/api/admin/dashboard/');
+export const fetchDashboard = async ({ dateRange } = {}) => {
+  const params = {};
+  if (dateRange && dateRange !== 'all') params.date_range = dateRange;
+  const response = await client.get('/api/admin/dashboard/', { params });
+  return response.data;
+};
+
+export const broadcastNotification = async ({ title, message, channel }) => {
+  const response = await client.post('/api/admin/notifications/broadcast/', { title, message, channel });
   return response.data;
 };
 
@@ -35,11 +42,24 @@ export const deleteAgency = async (agencyId) => {
   return response.data;
 };
 
-export const fetchAlerts = async ({ status, type, priority } = {}) => {
+export const createAgencyStaff = async (agencyId, data) => {
+  const response = await client.post(`/api/admin/agencies/${agencyId}/staff/`, data);
+  return response.data;
+};
+
+export const removeAgencyStaff = async (agencyId, userId) => {
+  const response = await client.delete(`/api/admin/agencies/${agencyId}/staff/${userId}/`);
+  return response.data;
+};
+
+export const fetchAlerts = async ({ status, type, priority, search, page, page_size } = {}) => {
   const params = {};
   if (status) params.status = status;
   if (type) params.type = type;
   if (priority) params.priority = priority;
+  if (search) params.search = search;
+  if (page) params.page = page;
+  if (page_size) params.page_size = page_size;
   const response = await client.get('/api/admin/alerts/', { params });
   return response.data;
 };
@@ -66,11 +86,13 @@ export const toggleUserActive = async (userId, isActive) => {
   return response.data;
 };
 
-export const fetchNotifications = async ({ channel, status, assignment } = {}) => {
+export const fetchNotifications = async ({ channel, status, assignment, page, page_size } = {}) => {
   const params = {};
   if (channel) params.channel = channel;
   if (status) params.status = status;
   if (assignment) params.assignment = assignment;
+  if (page) params.page = page;
+  if (page_size) params.page_size = page_size;
   const response = await client.get('/api/admin/notifications/', { params });
   return response.data;
 };

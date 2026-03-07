@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from alerts.models import AlertAssignment, Acknowledgment
 from alerts.serializers import AlertAssignmentSerializer, AcknowledgmentSerializer
 from .serializers import AcknowledgeAlertSerializer
+from .throttles import AgencyPollingThrottle
 from notifications.services import NotificationDispatcher
 from alert_system.permissions import IsAgencyUser
 from alert_system.api_responses import error_response, derive_detail_from_errors
@@ -14,13 +15,14 @@ from alert_system.api_responses import error_response, derive_detail_from_errors
 
 class AgencyAlertListView(APIView):
     permission_classes = [IsAuthenticated, IsAgencyUser]
+    throttle_classes = [AgencyPollingThrottle]
 
     def get(self, request):
         agency = request.user.agency_profile.agency
         assignments = (
             AlertAssignment.objects
             .filter(agency=agency)
-            .select_related('alert__location', 'agency')
+            .select_related('alert__location', 'alert__user', 'agency')
             .prefetch_related('acknowledgment', 'notifications')
             .order_by('-assigned_at')
         )
@@ -61,9 +63,15 @@ class AcknowledgeAlertView(APIView):
                 include_legacy_error=False,
             )
 
+        data = serializer.validated_data
+        if not data.get('acknowledged_by'):
+            data['acknowledged_by'] = request.user.full_name
+        if not data.get('responder_contact'):
+            data['responder_contact'] = request.user.phone_number or ''
+
         acknowledgment = Acknowledgment.objects.create(
             assignment=assignment,
-            **serializer.validated_data,
+            **data,
         )
 
         assignment.notification_status = 'DELIVERED'
@@ -109,16 +117,34 @@ class UpdateAlertStatusView(APIView):
         try:
             assignment = AlertAssignment.objects.select_related(
                 'alert__user'
-            ).get(assignment_id=assignment_id, agency=agency)
+            ).prefetch_related('acknowledgment').get(assignment_id=assignment_id, agency=agency)
         except AlertAssignment.DoesNotExist:
             return error_response(
                 detail='Assignment not found.',
                 status_code=status.HTTP_404_NOT_FOUND,
             )
 
+        if new_status == 'RESPONDING' and not hasattr(assignment, 'acknowledgment'):
+            return error_response(
+                detail='You must acknowledge the alert before marking it as Responding.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         alert = assignment.alert
+
+        if new_status == 'RESOLVED' and alert.status != 'RESPONDING':
+            return error_response(
+                detail='You must mark the alert as Responding before marking it as Resolved.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
         alert.status = new_status
-        alert.save(update_fields=['status'])
+        update_fields = ['status']
+        if new_status == 'RESOLVED':
+            alert.resolved_at = timezone.now()
+            alert.resolved_by = request.user.full_name
+            update_fields += ['resolved_at', 'resolved_by']
+        alert.save(update_fields=update_fields)
 
         NotificationDispatcher().send_status_update(assignment, new_status)
 

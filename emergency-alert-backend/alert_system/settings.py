@@ -141,6 +141,7 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
+    'EXCEPTION_HANDLER': 'alert_system.exceptions.custom_exception_handler',
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
@@ -153,6 +154,11 @@ REST_FRAMEWORK = {
         'alert_creation': config(
             'ALERT_CREATION_THROTTLE',
             default='100/hour' if DEBUG else '5/hour',
+        ),
+        # Agency web dashboard polls assignments frequently.
+        'agency_poll': config(
+            'AGENCY_POLL_THROTTLE',
+            default='5000/hour' if DEBUG else '1200/hour',
         ),
     },
 }

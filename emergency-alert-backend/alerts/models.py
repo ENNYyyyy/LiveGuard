@@ -38,6 +38,8 @@ class EmergencyAlert(models.Model):
     description = TextField(blank=True, null=True)
     status = CharField(max_length=15, choices=STATUSES, default='PENDING')
     rating = IntegerField(null=True, blank=True)  # 1–5 stars, submitted once after resolution
+    resolved_at = DateTimeField(null=True, blank=True)
+    resolved_by = CharField(max_length=150, blank=True, null=True)
     created_at = DateTimeField(auto_now_add=True)
     updated_at = DateTimeField(auto_now=True)
 
@@ -51,7 +53,10 @@ class Location(models.Model):
     latitude = DecimalField(max_digits=10, decimal_places=7)
     longitude = DecimalField(max_digits=10, decimal_places=7)
     accuracy = FloatField(null=True, blank=True)
+    altitude = FloatField(null=True, blank=True)
     address = TextField(blank=True, null=True)
+    city = CharField(max_length=100, blank=True, null=True)
+    state = CharField(max_length=100, blank=True, null=True)
     captured_at = DateTimeField(auto_now_add=True)
 
     def __str__(self):

@@ -1,6 +1,9 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/axiosConfig';
 import config from '../utils/config';
+
+const QUEUED_ALERT_KEY = 'QUEUED_OFFLINE_ALERT';
 
 const flattenErrorMessages = (value, parentKey = '') => {
   if (value == null) return [];
@@ -24,16 +27,21 @@ const flattenErrorMessages = (value, parentKey = '') => {
 
 export const createEmergencyAlert = createAsyncThunk(
   'alert/create',
-  async ({ alert_type, risk_answers, description, latitude, longitude, accuracy }, { rejectWithValue }) => {
+  async ({ alert_type, risk_answers, description, latitude, longitude, accuracy, altitude, city, state }, { rejectWithValue }) => {
+    const payload = { alert_type, risk_answers, description, latitude, longitude, accuracy, altitude, city, state };
     try {
-      const { data } = await api.post('/api/alerts/create/', {
-        alert_type, risk_answers, description, latitude, longitude, accuracy,
-      }, { timeout: config.ALERT_TIMEOUT });
+      const { data } = await api.post('/api/alerts/create/', payload, { timeout: config.ALERT_TIMEOUT });
+      await AsyncStorage.removeItem(QUEUED_ALERT_KEY);
       return data;
     } catch (err) {
       if (err.response?.status === 429) {
         const retryAfter = parseInt(err.response.headers?.['retry-after'], 10) || 60;
         return rejectWithValue({ isRateLimit: true, retryAfter });
+      }
+      // No response = network failure — queue the alert locally for retry when connectivity returns
+      if (!err.response) {
+        await AsyncStorage.setItem(QUEUED_ALERT_KEY, JSON.stringify(payload));
+        return rejectWithValue({ isOffline: true });
       }
       const errData = err.response?.data;
       if (errData) {
@@ -45,6 +53,22 @@ export const createEmergencyAlert = createAsyncThunk(
         }
       }
       return rejectWithValue('Failed to send alert. Please try again.');
+    }
+  }
+);
+
+export const retryQueuedAlert = createAsyncThunk(
+  'alert/retryQueued',
+  async (_, { rejectWithValue }) => {
+    try {
+      const stored = await AsyncStorage.getItem(QUEUED_ALERT_KEY);
+      if (!stored) return null;
+      const payload = JSON.parse(stored);
+      const { data } = await api.post('/api/alerts/create/', payload, { timeout: config.ALERT_TIMEOUT });
+      await AsyncStorage.removeItem(QUEUED_ALERT_KEY);
+      return data;
+    } catch {
+      return rejectWithValue('retry_failed');
     }
   }
 );
@@ -136,12 +160,15 @@ const initialState = {
   submitError: null,
   statusError: null,
   historyError: null,
+  historyLastFetched: null,
   cancelError: null,
   rateLimitUntil: null,
   priorityQuestions: [],
   priorityQuestionsVersion: null,
   questionsLoading: false,
   questionsError: null,
+  questionsCache: {},  // { [alert_type]: { questions, version } }
+  queuedAlert: null,   // payload saved offline, waiting for connectivity
 };
 
 const alertSlice = createSlice({
@@ -159,6 +186,12 @@ const alertSlice = createSlice({
       state.cancelError = null;
       state.questionsError = null;
       state.rateLimitUntil = null;
+    },
+    loadQuestionsFromCache: (state, { payload }) => {
+      state.priorityQuestions = payload.questions;
+      state.priorityQuestionsVersion = payload.version ?? null;
+      state.questionsLoading = false;
+      state.questionsError = null;
     },
   },
   extraReducers: (builder) => {
@@ -180,6 +213,9 @@ const alertSlice = createSlice({
         if (payload?.isRateLimit) {
           state.rateLimitUntil = Date.now() + payload.retryAfter * 1000;
           state.submitError = null;
+        } else if (payload?.isOffline) {
+          state.queuedAlert = true;
+          state.submitError = 'No internet connection. Your alert has been saved and will be sent automatically when connectivity is restored.';
         } else {
           state.submitError = typeof payload === 'string' ? payload : 'Failed to send alert. Please try again.';
         }
@@ -212,6 +248,7 @@ const alertSlice = createSlice({
         state.loading = false;
         state.alertHistory = payload;
         state.historyError = null;
+        state.historyLastFetched = Date.now();
       })
       .addCase(fetchAlertHistory.rejected, (state, { payload }) => {
         state.loading = false;
@@ -239,11 +276,15 @@ const alertSlice = createSlice({
         state.priorityQuestions = [];
         state.priorityQuestionsVersion = null;
       })
-      .addCase(fetchPriorityQuestions.fulfilled, (state, { payload }) => {
+      .addCase(fetchPriorityQuestions.fulfilled, (state, { payload, meta }) => {
         state.questionsLoading = false;
         state.priorityQuestions = payload?.questions || [];
         state.priorityQuestionsVersion = payload?.version ?? null;
         state.questionsError = null;
+        state.questionsCache[meta.arg] = {
+          questions: payload?.questions || [],
+          version: payload?.version ?? null,
+        };
       })
       .addCase(fetchPriorityQuestions.rejected, (state, { payload }) => {
         state.questionsLoading = false;
@@ -251,8 +292,22 @@ const alertSlice = createSlice({
         state.priorityQuestionsVersion = null;
         state.questionsError = payload;
       });
+
+    // retryQueuedAlert
+    builder
+      .addCase(retryQueuedAlert.fulfilled, (state, { payload }) => {
+        if (payload) {
+          state.currentAlert = payload;
+          state.queuedAlert = null;
+          state.submitError = null;
+        }
+      })
+      .addCase(retryQueuedAlert.rejected, (state) => {
+        // Stay queued — will retry again on next connectivity event
+      });
   },
 });
 
-export const { clearCurrentAlert, clearAlertError } = alertSlice.actions;
+export const { clearCurrentAlert, clearAlertError, loadQuestionsFromCache } = alertSlice.actions;
 export default alertSlice.reducer;
+

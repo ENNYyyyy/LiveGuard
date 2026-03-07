@@ -40,7 +40,14 @@ const SettingRow = ({ icon, label, value, onPress, danger, colors, rightElement 
   );
 };
 
-const SettingsScreen = ({ navigation }) => {
+const SECTION_TITLES = {
+  appearance:    'Appearance',
+  notifications: 'Notifications',
+  location:      'Location',
+};
+
+const SettingsScreen = ({ navigation, route }) => {
+  const section = route?.params?.section || null;
   const { isDark, toggleTheme, colors } = useTheme();
   const dispatch = useDispatch();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -103,111 +110,121 @@ const SettingsScreen = ({ navigation }) => {
             <Text style={styles.backText}>Back</Text>
           </View>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Settings & Support</Text>
+        <Text style={styles.headerTitle}>{SECTION_TITLES[section] || 'Settings & Support'}</Text>
         <View style={styles.backBtn} />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Appearance</Text>
-          <SettingRow
-            icon={<Ionicons name="moon-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Dark Mode"
-            colors={colors}
-            rightElement={
-              <Switch
-                value={isDark}
-                onValueChange={toggleTheme}
-                thumbColor={colors.BACKGROUND_WHITE}
-                trackColor={{ false: colors.BORDER_GREY, true: colors.PRIMARY_BLUE }}
+        {(!section || section === 'appearance') && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Appearance</Text>
+            <SettingRow
+              icon={<Ionicons name="moon-outline" size={20} color={colors.TEXT_MEDIUM} />}
+              label="Dark Mode"
+              colors={colors}
+              rightElement={
+                <Switch
+                  value={isDark}
+                  onValueChange={toggleTheme}
+                  thumbColor={colors.BACKGROUND_WHITE}
+                  trackColor={{ false: colors.BORDER_GREY, true: colors.PRIMARY_BLUE }}
+                />
+              }
+            />
+          </View>
+        )}
+
+        {(!section || section === 'notifications') && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Notifications</Text>
+            <SettingRow
+              icon={<Ionicons name="notifications-outline" size={20} color={colors.TEXT_MEDIUM} />}
+              label="Push Notifications"
+              onPress={() => Linking.openSettings()}
+              colors={colors}
+            />
+            <SettingRow
+              icon={<Ionicons name="phone-portrait-outline" size={20} color={colors.TEXT_MEDIUM} />}
+              label="Vibration Alerts"
+              onPress={() => Linking.openSettings()}
+              colors={colors}
+            />
+          </View>
+        )}
+
+        {(!section || section === 'location') && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Location</Text>
+            <SettingRow
+              icon={<Ionicons name="location-outline" size={20} color={colors.TEXT_MEDIUM} />}
+              label="Location Accuracy"
+              value="High"
+              onPress={() => Linking.openSettings()}
+              colors={colors}
+            />
+            <SettingRow
+              icon={<Ionicons name="map-outline" size={20} color={colors.TEXT_MEDIUM} />}
+              label="Background Location"
+              onPress={() => Linking.openSettings()}
+              colors={colors}
+            />
+          </View>
+        )}
+
+        {!section && (
+          <>
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Account</Text>
+              <SettingRow
+                icon={<Ionicons name="lock-closed-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Change Password"
+                onPress={() => setShowChangePassword(true)}
+                colors={colors}
               />
-            }
-          />
-        </View>
+              <SettingRow
+                icon={<Ionicons name="trash-outline" size={20} color={colors.ACCENT_RED} />}
+                label="Delete Account"
+                onPress={() => setShowDeleteAccount(true)}
+                colors={colors}
+                danger
+              />
+            </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Notifications</Text>
-          <SettingRow
-            icon={<Ionicons name="notifications-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Push Notifications"
-            onPress={() => {}}
-            colors={colors}
-          />
-          <SettingRow
-            icon={<Ionicons name="phone-portrait-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Vibration Alerts"
-            onPress={() => {}}
-            colors={colors}
-          />
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Location</Text>
-          <SettingRow
-            icon={<Ionicons name="location-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Location Accuracy"
-            value="High"
-            onPress={() => {}}
-            colors={colors}
-          />
-          <SettingRow
-            icon={<Ionicons name="map-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Background Location"
-            onPress={() => {}}
-            colors={colors}
-          />
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Account</Text>
-          <SettingRow
-            icon={<Ionicons name="lock-closed-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Change Password"
-            onPress={() => setShowChangePassword(true)}
-            colors={colors}
-          />
-          <SettingRow
-            icon={<Ionicons name="trash-outline" size={20} color={colors.ACCENT_RED} />}
-            label="Delete Account"
-            onPress={() => setShowDeleteAccount(true)}
-            colors={colors}
-            danger
-          />
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Support</Text>
-          <SettingRow
-            icon={<Ionicons name="help-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Help & FAQ"
-            onPress={() => {}}
-            colors={colors}
-          />
-          <SettingRow
-            icon={<Ionicons name="mail-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Contact Support"
-            onPress={() => Linking.openURL('mailto:support@liveguard.ng')}
-            colors={colors}
-          />
-          <SettingRow
-            icon={<Ionicons name="document-text-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Privacy Policy"
-            onPress={() => {}}
-            colors={colors}
-          />
-          <SettingRow
-            icon={<Ionicons name="reader-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="Terms of Service"
-            onPress={() => {}}
-            colors={colors}
-          />
-          <SettingRow
-            icon={<Ionicons name="information-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
-            label="App Version"
-            value="1.0.0"
-            colors={colors}
-          />
-        </View>
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Support</Text>
+              <SettingRow
+                icon={<Ionicons name="help-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Help & FAQ"
+                onPress={() => navigation.navigate('FaqScreen')}
+                colors={colors}
+              />
+              <SettingRow
+                icon={<Ionicons name="mail-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Contact Support"
+                onPress={() => Linking.openURL('mailto:support@liveguard.ng')}
+                colors={colors}
+              />
+              <SettingRow
+                icon={<Ionicons name="document-text-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Privacy Policy"
+                onPress={() => navigation.navigate('LegalScreen', { type: 'privacy' })}
+                colors={colors}
+              />
+              <SettingRow
+                icon={<Ionicons name="reader-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="Terms of Service"
+                onPress={() => navigation.navigate('LegalScreen', { type: 'terms' })}
+                colors={colors}
+              />
+              <SettingRow
+                icon={<Ionicons name="information-circle-outline" size={20} color={colors.TEXT_MEDIUM} />}
+                label="App Version"
+                value="1.0.0"
+                colors={colors}
+              />
+            </View>
+          </>
+        )}
       </ScrollView>
 
       {/* Change Password Modal */}

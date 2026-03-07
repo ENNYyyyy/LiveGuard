@@ -927,6 +927,141 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .setting-row input:focus { border-color: var(--accent); }
 
+/* ── Breakdown bar chart rows ────────────────────────────────────────────── */
+.breakdown-row.bar-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 40px;
+  gap: 8px;
+  align-items: center;
+}
+
+.b-bar-wrap {
+  height: 6px;
+  background: var(--bg-base);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.b-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.45s ease;
+  min-width: 4px;
+}
+
+/* ── Dashboard date range tabs ───────────────────────────────────────────── */
+.date-range-tabs {
+  display: flex;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.date-range-tab {
+  background: none;
+  border: none;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+
+.date-range-tab:hover { background: var(--bg-card-hover); color: var(--text-1); }
+.date-range-tab.active { background: var(--accent); color: #fff; }
+
+.ghost-btn.active-btn {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim2);
+}
+
+/* ── Pagination ──────────────────────────────────────────────────────────── */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.page-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.page-btn:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-dim2); }
+.page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.page-info {
+  font-size: 13px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+/* ── Bulk action bar ─────────────────────────────────────────────────────── */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--accent-dim2);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-md);
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  flex-wrap: wrap;
+}
+
+.row-selected td { background: var(--accent-dim2) !important; }
+
+/* ── Broadcast notification card ─────────────────────────────────────────── */
+.broadcast-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  margin-bottom: 8px;
+  display: grid;
+  gap: 12px;
+}
+
+.broadcast-card h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.broadcast-card p {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: -6px;
+}
+
+.broadcast-form {
+  display: grid;
+  gap: 10px;
+}
+
+.bc-row {
+  display: flex;
+  gap: 10px;
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    EMPTY / LOADING STATES
 ════════════════════════════════════════════════════════════════════════════ */

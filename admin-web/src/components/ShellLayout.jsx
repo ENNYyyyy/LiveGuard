@@ -1,14 +1,25 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import {
+  LayoutDashboard,
+  Siren,
+  Building2,
+  Users,
+  Bell,
+  BarChart2,
+  Settings,
+  Shield,
+  LogOut,
+} from 'lucide-react';
 
 const NAV_LINKS = [
-  { to: '/dashboard',     label: 'Dashboard',     icon: '⊞' },
-  { to: '/alerts',        label: 'Alerts',         icon: '🚨' },
-  { to: '/agencies',      label: 'Agencies',       icon: '🏛' },
-  { to: '/users',         label: 'Users',          icon: '👥' },
-  { to: '/notifications', label: 'Notif. Log',     icon: '🔔' },
-  { to: '/reports',       label: 'Reports',        icon: '📊' },
-  { to: '/settings',      label: 'Settings',       icon: '⚙' },
+  { to: '/dashboard',     label: 'Dashboard',     Icon: LayoutDashboard },
+  { to: '/alerts',        label: 'Alerts',         Icon: Siren },
+  { to: '/agencies',      label: 'Agencies',       Icon: Building2 },
+  { to: '/users',         label: 'Users',          Icon: Users },
+  { to: '/notifications', label: 'Notif. Log',     Icon: Bell },
+  { to: '/reports',       label: 'Reports',        Icon: BarChart2 },
+  { to: '/settings',      label: 'Settings',       Icon: Settings },
 ];
 
 const PAGE_TITLES = {
@@ -43,7 +54,7 @@ const ShellLayout = ({ children }) => {
       {/* ── Sidebar ── */}
       <aside className="admin-sidebar">
         <div className="sidebar-brand">
-          <div className="brand-mark" aria-hidden>🛡</div>
+          <div className="brand-mark" aria-hidden><Shield size={24} /></div>
           <div>
             <div className="brand-title">LiveGuard</div>
             <div className="brand-sub">Admin Console</div>
@@ -52,13 +63,13 @@ const ShellLayout = ({ children }) => {
 
         <nav className="sidebar-nav" aria-label="Main navigation">
           <div className="sidebar-section-label">Navigation</div>
-          {NAV_LINKS.map(({ to, label, icon }) => (
+          {NAV_LINKS.map(({ to, label, Icon }) => (
             <NavLink
               key={to}
               to={to}
               className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}
             >
-              <span className="nav-icon" aria-hidden>{icon}</span>
+              <span className="nav-icon" aria-hidden><Icon size={16} /></span>
               {label}
             </NavLink>
           ))}
@@ -79,7 +90,7 @@ const ShellLayout = ({ children }) => {
             onClick={logout}
             title="Logout"
           >
-            ⏻
+            <LogOut size={16} />
           </button>
         </div>
       </aside>

@@ -1,5 +1,8 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const LAST_LOCATION_KEY = 'LAST_LOCATION';
 
 export const requestLocationPermission = createAsyncThunk(
   'location/requestPermission',
@@ -28,7 +31,17 @@ export const getCurrentLocation = createAsyncThunk(
       const address = [result?.street, result?.district, result?.city, result?.region, result?.country]
         .filter(Boolean)
         .join(', ');
-      return { latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, address };
+      const result2 = {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        accuracy: coords.accuracy,
+        altitude: coords.altitude ?? null,
+        city: result?.city ?? null,
+        state: result?.region ?? null,
+        address,
+      };
+      AsyncStorage.setItem(LAST_LOCATION_KEY, JSON.stringify(result2)).catch(() => {});
+      return result2;
     } catch (err) {
       return rejectWithValue(err.message || 'Failed to get location');
     }
@@ -65,13 +78,26 @@ export const fetchLocation = createAsyncThunk(
         .filter(Boolean)
         .join(', ');
 
-      return {
+      const locationResult = {
         latitude: coords.latitude,
         longitude: coords.longitude,
         accuracy: coords.accuracy,
+        altitude: coords.altitude ?? null,
+        city: result?.city ?? null,
+        state: result?.region ?? null,
         address,
         permissionStatus: 'granted',
       };
+      AsyncStorage.setItem(LAST_LOCATION_KEY, JSON.stringify({
+        latitude: locationResult.latitude,
+        longitude: locationResult.longitude,
+        accuracy: locationResult.accuracy,
+        altitude: locationResult.altitude,
+        city: locationResult.city,
+        state: locationResult.state,
+        address: locationResult.address,
+      })).catch(() => {});
+      return locationResult;
     } catch (err) {
       const msg = err?.message || '';
       const isTimeout = msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('timed out');
@@ -84,6 +110,9 @@ const initialState = {
   latitude: null,
   longitude: null,
   accuracy: null,
+  altitude: null,
+  city: null,
+  state: null,
   address: null,
   isTracking: false,
   permissionGranted: false,
@@ -130,6 +159,9 @@ const locationSlice = createSlice({
         state.latitude = payload.latitude;
         state.longitude = payload.longitude;
         state.accuracy = payload.accuracy;
+        state.altitude = payload.altitude ?? null;
+        state.city = payload.city ?? null;
+        state.state = payload.state ?? null;
         state.address = payload.address;
         state.permissionGranted = true;
         state.permissionStatus = 'granted';
@@ -158,6 +190,9 @@ const locationSlice = createSlice({
         state.latitude = payload.latitude;
         state.longitude = payload.longitude;
         state.accuracy = payload.accuracy;
+        state.altitude = payload.altitude ?? null;
+        state.city = payload.city ?? null;
+        state.state = payload.state ?? null;
         state.address = payload.address;
         state.permissionGranted = true;
         state.permissionStatus = 'granted';

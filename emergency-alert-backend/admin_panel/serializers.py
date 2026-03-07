@@ -8,6 +8,27 @@ from .models import SystemSetting
 
 # ─── Agency ───────────────────────────────────────────────────────────────────
 
+class AgencyStaffCreateSerializer(serializers.Serializer):
+    email        = serializers.EmailField()
+    password     = serializers.CharField(min_length=8, write_only=True)
+    full_name    = serializers.CharField(max_length=150)
+    phone_number = serializers.CharField(max_length=15)
+    role         = serializers.ChoiceField(choices=AgencyUser.ROLES)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
+
+    def create(self, validated_data):
+        agency = self.context['agency']
+        role = validated_data.pop('role')
+        password = validated_data.pop('password')
+        user = User.objects.create_user(password=password, **validated_data)
+        AgencyUser.objects.create(agency=agency, user=user, role=role)
+        return user
+
+
 class AgencyStaffSerializer(serializers.ModelSerializer):
     user_id      = serializers.IntegerField(source='user.user_id', read_only=True)
     full_name    = serializers.CharField(source='user.full_name', read_only=True)
@@ -120,7 +141,7 @@ class AlertDetailAdminSerializer(serializers.ModelSerializer):
         model  = EmergencyAlert
         fields = [
             'alert_id', 'alert_type', 'priority_level', 'description',
-            'status', 'created_at', 'updated_at',
+            'status', 'resolved_at', 'resolved_by', 'created_at', 'updated_at',
             'reporter', 'location', 'assignments',
         ]
 

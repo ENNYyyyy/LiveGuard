@@ -24,6 +24,8 @@ import ProfileScreen from '../screens/profile/ProfileScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import EmergencyContactsScreen from '../screens/contacts/EmergencyContactsScreen';
 import OnboardingWalkthrough from '../screens/OnboardingWalkthrough';
+import FaqScreen from '../screens/FaqScreen';
+import LegalScreen from '../screens/LegalScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -145,6 +147,8 @@ export default function AppNavigator() {
       <Stack.Screen name="AlertStatusScreen" component={AlertStatusScreen} />
       <Stack.Screen name="SettingsScreen" component={SettingsScreen} />
       <Stack.Screen name="EmergencyContactsScreen" component={EmergencyContactsScreen} />
+      <Stack.Screen name="FaqScreen" component={FaqScreen} />
+      <Stack.Screen name="LegalScreen" component={LegalScreen} />
     </Stack.Navigator>
   );
 }

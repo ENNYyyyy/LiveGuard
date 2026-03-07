@@ -14,6 +14,9 @@ class SecurityAgencySerializer(serializers.ModelSerializer):
 
 
 class AcknowledgeAlertSerializer(serializers.ModelSerializer):
+    acknowledged_by = serializers.CharField(required=False, allow_blank=True, max_length=150)
+    responder_contact = serializers.CharField(required=False, allow_blank=True, max_length=15)
+
     class Meta:
         model = Acknowledgment
         fields = [

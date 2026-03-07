@@ -11,8 +11,9 @@ import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useDispatch, useSelector } from 'react-redux';
-import { requestLocationPermission, getCurrentLocation, fetchLocation } from '../../store/locationSlice';
-import { fetchAlertHistory } from '../../store/alertSlice';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { requestLocationPermission, getCurrentLocation, fetchLocation, setLocation } from '../../store/locationSlice';
+import { fetchAlertHistory, retryQueuedAlert } from '../../store/alertSlice';
 import { setupNotificationListeners, registerForPushNotifications } from '../../services/notificationService';
 import { registerDevice } from '../../store/authSlice';
 import SOSButton from '../../components/SOSButton';
@@ -30,11 +31,31 @@ const HomeScreen = ({ navigation }) => {
     useSelector((state) => state.location);
   const user = useSelector((state) => state.auth.user);
   const { isConnected } = useNetInfo();
+  const queuedAlert = useSelector((state) => state.alert.queuedAlert);
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
+  // When connectivity is restored and an alert is queued, retry it automatically
+  useEffect(() => {
+    if (isConnected && queuedAlert) {
+      dispatch(retryQueuedAlert()).then((result) => {
+        if (retryQueuedAlert.fulfilled.match(result) && result.payload) {
+          navigation.navigate('AlertStatusScreen', { alertId: result.payload.alert_id });
+        }
+      });
+    }
+  }, [isConnected, queuedAlert]);
+
   useEffect(() => {
     const init = async () => {
+      // Seed map immediately from last known location while fresh fetch runs
+      try {
+        const cached = await AsyncStorage.getItem('LAST_LOCATION');
+        if (cached) dispatch(setLocation(JSON.parse(cached)));
+      } catch {
+        // Ignore
+      }
+
       await dispatch(requestLocationPermission());
       dispatch(getCurrentLocation());
       dispatch(fetchAlertHistory());
