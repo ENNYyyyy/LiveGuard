@@ -1,7 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ShellLayout from '../components/ShellLayout';
 import { fetchNotifications, broadcastNotification } from '../api/admin';
 import { parseApiError } from '../api/errors';
+
+// B4 — sortable column header
+const SortTh = ({ label, sortKey, sortConfig, onSort }) => {
+  const active = sortConfig.key === sortKey;
+  return (
+    <th className="sortable-th" onClick={() => onSort(sortKey)}>
+      {label}
+      <span className="sort-indicator">{active ? (sortConfig.dir === 'asc' ? '↑' : '↓') : '↕'}</span>
+    </th>
+  );
+};
 
 const CHANNELS  = ['', 'PUSH', 'SMS', 'EMAIL'];
 const STATUSES  = ['', 'PENDING', 'SENT', 'DELIVERED', 'FAILED'];
@@ -15,6 +26,8 @@ const NotificationsPage = () => {
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  // B4
+  const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' });
 
   const [bcForm, setBcForm] = useState({ title: '', message: '', channel: 'PUSH' });
   const [bcBusy, setBcBusy] = useState(false);
@@ -69,6 +82,21 @@ const NotificationsPage = () => {
     setFilters((prev) => ({ ...prev, [key]: e.target.value }));
     setPage(1);
   };
+
+  // B4
+  const handleSort = (key) => {
+    setSortConfig((prev) => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
+  };
+
+  const sortedLogs = useMemo(() => {
+    if (!sortConfig.key) return logs;
+    return [...logs].sort((a, b) => {
+      const av = a[sortConfig.key] ?? '';
+      const bv = b[sortConfig.key] ?? '';
+      const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+      return sortConfig.dir === 'asc' ? cmp : -cmp;
+    });
+  }, [logs, sortConfig]);
 
   return (
     <ShellLayout>
@@ -150,20 +178,20 @@ const NotificationsPage = () => {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Log #</th>
-                    <th>Alert #</th>
-                    <th>Assignment #</th>
-                    <th>Agency</th>
-                    <th>Channel</th>
+                    <SortTh label="Log #"       sortKey="log_id"          sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Alert #"     sortKey="alert_id"        sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Assignment #" sortKey="assignment_id"  sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Agency"      sortKey="agency_name"     sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Channel"     sortKey="channel_type"    sortConfig={sortConfig} onSort={handleSort} />
                     <th>Recipient</th>
-                    <th>Status</th>
-                    <th>Retries</th>
+                    <SortTh label="Status"      sortKey="delivery_status" sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Retries"     sortKey="retry_count"     sortConfig={sortConfig} onSort={handleSort} />
                     <th>Error</th>
-                    <th>Sent At</th>
+                    <SortTh label="Sent At"     sortKey="sent_at"         sortConfig={sortConfig} onSort={handleSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.map((log) => (
+                  {sortedLogs.map((log) => (
                     <tr key={log.log_id}>
                       <td>{log.log_id}</td>
                       <td>{log.alert_id ? `#${log.alert_id}` : '—'}</td>

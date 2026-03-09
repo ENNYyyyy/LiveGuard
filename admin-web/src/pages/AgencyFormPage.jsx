@@ -17,12 +17,22 @@ const EMPTY_FORM = {
   is_active: true,
 };
 
+// B3 — client-side validation
+const validateForm = (form) => {
+  const errs = {};
+  if (!form.agency_name.trim()) errs.agency_name = 'Agency name is required';
+  if (!form.contact_email.trim()) errs.contact_email = 'Contact email is required';
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contact_email)) errs.contact_email = 'Invalid email address';
+  return errs;
+};
+
 const AgencyFormPage = () => {
   const { agencyId } = useParams();
   const navigate = useNavigate();
   const isEdit = Boolean(agencyId);
 
   const [form, setForm] = useState(EMPTY_FORM);
+  const [fieldErrors, setFieldErrors] = useState({});  // B3
   const [loading, setLoading] = useState(isEdit);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -54,10 +64,17 @@ const AgencyFormPage = () => {
   const set = (field) => (e) => {
     const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
     setForm((prev) => ({ ...prev, [field]: value }));
+    // Clear field error on change (B3)
+    if (fieldErrors[field]) setFieldErrors((prev) => { const next = { ...prev }; delete next[field]; return next; });
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    // B3 — validate before sending to backend
+    const errs = validateForm(form);
+    setFieldErrors(errs);
+    if (Object.keys(errs).length) return;
+
     setSubmitting(true);
     setError('');
     try {
@@ -99,13 +116,14 @@ const AgencyFormPage = () => {
 
         {error ? <div className="error-banner">{error}</div> : null}
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <div className="detail-grid">
             <div className="detail-card form-card">
               <h3>Basic Info</h3>
 
               <label htmlFor="agency_name">Agency Name</label>
-              <input id="agency_name" value={form.agency_name} onChange={set('agency_name')} required placeholder="Lagos Police Force" />
+              <input id="agency_name" value={form.agency_name} onChange={set('agency_name')} placeholder="Lagos Police Force" />
+              {fieldErrors.agency_name && <span className="field-err">{fieldErrors.agency_name}</span>}
 
               <label htmlFor="agency_type">Agency Type</label>
               <select id="agency_type" value={form.agency_type} onChange={set('agency_type')}>
@@ -131,7 +149,8 @@ const AgencyFormPage = () => {
               <h3>Contact Details</h3>
 
               <label htmlFor="contact_email">Contact Email</label>
-              <input id="contact_email" type="email" value={form.contact_email} onChange={set('contact_email')} required placeholder="contact@agency.gov.ng" />
+              <input id="contact_email" type="email" value={form.contact_email} onChange={set('contact_email')} placeholder="contact@agency.gov.ng" />
+              {fieldErrors.contact_email && <span className="field-err">{fieldErrors.contact_email}</span>}
 
               <label htmlFor="contact_phone">Contact Phone</label>
               <input id="contact_phone" value={form.contact_phone} onChange={set('contact_phone')} placeholder="+2348012345678" />

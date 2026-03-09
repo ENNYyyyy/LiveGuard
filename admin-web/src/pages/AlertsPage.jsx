@@ -1,8 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ShellLayout from '../components/ShellLayout';
 import { fetchAlerts } from '../api/admin';
 import { parseApiError } from '../api/errors';
+
+// B4 — sortable column header
+const SortTh = ({ label, sortKey, sortConfig, onSort, style }) => {
+  const active = sortConfig.key === sortKey;
+  return (
+    <th className="sortable-th" onClick={() => onSort(sortKey)} style={style}>
+      {label}
+      <span className="sort-indicator">{active ? (sortConfig.dir === 'asc' ? '↑' : '↓') : '↕'}</span>
+    </th>
+  );
+};
 
 const STATUSES = ['', 'PENDING', 'DISPATCHED', 'ACKNOWLEDGED', 'RESPONDING', 'RESOLVED', 'CANCELLED'];
 const TYPES = ['', 'TERRORISM', 'BANDITRY', 'KIDNAPPING', 'ARMED_ROBBERY', 'ROBBERY', 'FIRE_INCIDENCE', 'ACCIDENT', 'OTHER'];
@@ -18,6 +29,8 @@ const AlertsPage = () => {
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  // B4 — client-side sort of the currently loaded page
+  const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' });
 
   const load = async () => {
     setLoading(true);
@@ -49,6 +62,21 @@ const AlertsPage = () => {
     setFilters((prev) => ({ ...prev, [key]: e.target.value }));
     setPage(1);
   };
+
+  // B4
+  const handleSort = (key) => {
+    setSortConfig((prev) => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
+  };
+
+  const sortedAlerts = useMemo(() => {
+    if (!sortConfig.key) return alerts;
+    return [...alerts].sort((a, b) => {
+      const av = a[sortConfig.key] ?? '';
+      const bv = b[sortConfig.key] ?? '';
+      const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+      return sortConfig.dir === 'asc' ? cmp : -cmp;
+    });
+  }, [alerts, sortConfig]);
 
   const exportCsv = () => {
     const headers = ['ID', 'Type', 'Priority', 'Status', 'Reporter', 'Address', 'Created', 'Assignments'];
@@ -129,18 +157,18 @@ const AlertsPage = () => {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>#</th>
-                    <th>Type</th>
-                    <th>Priority</th>
-                    <th>Status</th>
+                    <SortTh label="#"           sortKey="alert_id"      sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Type"        sortKey="alert_type"    sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Priority"    sortKey="priority_level" sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Status"      sortKey="status"        sortConfig={sortConfig} onSort={handleSort} />
                     <th>Reporter</th>
                     <th>Address</th>
-                    <th>Created</th>
-                    <th>Assignments</th>
+                    <SortTh label="Created"     sortKey="created_at"    sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Assignments" sortKey="assignment_count" sortConfig={sortConfig} onSort={handleSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {alerts.map((alert) => (
+                  {sortedAlerts.map((alert) => (
                     <tr key={alert.alert_id}>
                       <td><Link to={`/alerts/${alert.alert_id}`}>#{alert.alert_id}</Link></td>
                       <td><span className="badge type">{alert.alert_type}</span></td>

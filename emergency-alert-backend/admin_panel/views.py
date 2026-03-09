@@ -27,6 +27,7 @@ from .serializers import (
     AgencyDetailSerializer,
     AgencyCreateUpdateSerializer,
     AgencyStaffCreateSerializer,
+    AgencyStaffUpdateSerializer,
     AlertListAdminSerializer,
     AlertDetailAdminSerializer,
     CivilianUserSerializer,
@@ -296,24 +297,46 @@ class AgencyStaffView(APIView):
 
 
 class AgencyStaffDetailView(APIView):
-    """Remove a staff member from an agency and delete their account."""
+    """Update or remove a staff member linked to an agency."""
     permission_classes = [IsAuthenticated, IsAdminUser]
 
-    def delete(self, request, agency_id, user_id):
+    def _get_agency_user(self, agency_id, user_id):
         try:
-            agency_user = AgencyUser.objects.select_related('user').get(
+            return AgencyUser.objects.select_related('user').get(
                 agency__agency_id=agency_id, user__user_id=user_id
             )
         except AgencyUser.DoesNotExist:
-            return Response({'error': 'Staff member not found.'}, status=status.HTTP_404_NOT_FOUND)
-        user = agency_user.user
-        user.delete()  # cascades to AgencyUser
-        agency = (
+            return None
+
+    def _agency_detail(self, agency_id):
+        return (
             SecurityAgency.objects
             .prefetch_related('staff__user', 'assignments')
             .get(agency_id=agency_id)
         )
-        return Response(AgencyDetailSerializer(agency).data)
+
+    def patch(self, request, agency_id, user_id):
+        """
+        PATCH /api/admin/agencies/<agency_id>/staff/<user_id>/
+        Editable: full_name, phone_number, role.  Email is immutable.
+        Returns updated AgencyDetailSerializer payload.
+        """
+        agency_user = self._get_agency_user(agency_id, user_id)
+        if not agency_user:
+            return Response({'error': 'Staff member not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = AgencyStaffUpdateSerializer(agency_user, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save()
+        return Response(AgencyDetailSerializer(self._agency_detail(agency_id)).data)
+
+    def delete(self, request, agency_id, user_id):
+        agency_user = self._get_agency_user(agency_id, user_id)
+        if not agency_user:
+            return Response({'error': 'Staff member not found.'}, status=status.HTTP_404_NOT_FOUND)
+        user = agency_user.user
+        user.delete()  # cascades to AgencyUser
+        return Response(AgencyDetailSerializer(self._agency_detail(agency_id)).data)
 
 
 # ─── Alert management ────────────────────────────────────────────────────────

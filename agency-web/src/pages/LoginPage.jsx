@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const LoginPage = () => {
@@ -7,6 +8,7 @@ const LoginPage = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);   // A7
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
 
@@ -58,17 +60,31 @@ const LoginPage = () => {
         {fieldErrors.email ? <span className="field-error">{fieldErrors.email}</span> : null}
 
         <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password required"
-          autoComplete="current-password"
-        />
+        {/* A7 — password visibility toggle */}
+        <div className="pwd-wrap">
+          <input
+            id="password"
+            type={showPwd ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password required"
+            autoComplete="current-password"
+          />
+          <button
+            type="button"
+            className="pwd-toggle"
+            onClick={() => setShowPwd((v) => !v)}
+            aria-label={showPwd ? 'Hide password' : 'Show password'}
+          >
+            {showPwd ? <EyeOff size={15} /> : <Eye size={15} />}
+          </button>
+        </div>
         {fieldErrors.password ? <span className="field-error">{fieldErrors.password}</span> : null}
 
-        <div className="login-forgot">Forgotten Password?</div>
+        {/* A6 — remove dead clickable affordance; show plain muted hint */}
+        <div className="login-forgot-note" title="Contact your system administrator to reset your password.">
+          Forgotten Password? Contact your administrator.
+        </div>
 
         <button className="login-btn" disabled={loading} type="submit">
           {loading ? 'Signing in…' : 'Login'}

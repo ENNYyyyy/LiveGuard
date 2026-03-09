@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import User
-from agencies.models import SecurityAgency
+from agencies.models import SecurityAgency, AgencyUser
 from alerts.models import EmergencyAlert, Location, AlertAssignment
 from notifications.models import NotificationLog
 
@@ -424,6 +424,177 @@ class CivilianUserDetailTests(APITestCase):
         resp = self.client.patch(
             self.url, {'is_active': False}, content_type='application/json',
             **auth(self.civilian),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+
+# ─── Agency staff update ──────────────────────────────────────────────────────
+
+class AgencyStaffUpdateTests(APITestCase):
+    """
+    Tests for PATCH /api/admin/agencies/<id>/staff/<uid>/
+    Covers: success cases, invalid role, invalid phone, non-existent staff,
+    cross-agency mismatch, and permission guard.
+    """
+
+    def setUp(self):
+        self.admin  = make_admin()
+        self.agency = make_agency()
+        # Create an agency staff member
+        self.staff_user = User.objects.create_user(
+            email='staff@agency.test',
+            password='staffpass123',
+            phone_number='+2348011111111',
+            full_name='Original Name',
+        )
+        self.agency_user = AgencyUser.objects.create(
+            agency=self.agency,
+            user=self.staff_user,
+            role='DISPATCHER',
+        )
+        self.url = reverse(
+            'admin-agency-staff-detail',
+            args=[self.agency.agency_id, self.staff_user.user_id],
+        )
+
+    # ── Happy path ──────────────────────────────────────────────────────────
+
+    def test_patch_staff_updates_full_name(self):
+        resp = self.client.patch(
+            self.url,
+            {'full_name': 'Updated Name'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.staff_user.refresh_from_db()
+        self.assertEqual(self.staff_user.full_name, 'Updated Name')
+        # Response is AgencyDetailSerializer payload
+        self.assertIn('staff', resp.data)
+
+    def test_patch_staff_updates_role(self):
+        resp = self.client.patch(
+            self.url,
+            {'role': 'COMMANDER'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.agency_user.refresh_from_db()
+        self.assertEqual(self.agency_user.role, 'COMMANDER')
+
+    def test_patch_staff_updates_phone_number(self):
+        resp = self.client.patch(
+            self.url,
+            {'phone_number': '+2348099999999'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.staff_user.refresh_from_db()
+        self.assertEqual(self.staff_user.phone_number, '+2348099999999')
+
+    def test_patch_staff_multiple_fields(self):
+        resp = self.client.patch(
+            self.url,
+            {'full_name': 'Multi Update', 'role': 'RESPONDER', 'phone_number': '+2348088888888'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.staff_user.refresh_from_db()
+        self.agency_user.refresh_from_db()
+        self.assertEqual(self.staff_user.full_name, 'Multi Update')
+        self.assertEqual(self.staff_user.phone_number, '+2348088888888')
+        self.assertEqual(self.agency_user.role, 'RESPONDER')
+
+    def test_patch_staff_response_includes_updated_staff_in_list(self):
+        """The returned agency detail must reflect the update."""
+        resp = self.client.patch(
+            self.url,
+            {'full_name': 'In List'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        names = [m['full_name'] for m in resp.data['staff']]
+        self.assertIn('In List', names)
+
+    # ── Validation errors ───────────────────────────────────────────────────
+
+    def test_patch_staff_invalid_role_returns_400(self):
+        resp = self.client.patch(
+            self.url,
+            {'role': 'OVERLORD'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_staff_invalid_phone_no_plus_returns_400(self):
+        resp = self.client.patch(
+            self.url,
+            {'phone_number': '2348012345678'},  # missing leading +
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_staff_invalid_phone_letters_returns_400(self):
+        resp = self.client.patch(
+            self.url,
+            {'phone_number': '+234ABC12345'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_patch_staff_empty_body_returns_400(self):
+        """Empty payload — no fields provided — must be rejected."""
+        resp = self.client.patch(
+            self.url,
+            {},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # ── Not-found cases ─────────────────────────────────────────────────────
+
+    def test_patch_nonexistent_staff_returns_404(self):
+        url = reverse('admin-agency-staff-detail', args=[self.agency.agency_id, 99999])
+        resp = self.client.patch(
+            url,
+            {'full_name': 'Ghost'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patch_staff_cross_agency_mismatch_returns_404(self):
+        """User belongs to agency A — patching via agency B's URL must return 404."""
+        other_agency = make_agency('Other Agency', 'FIRE', 'fire@other.com', '+2348077777777')
+        url = reverse(
+            'admin-agency-staff-detail',
+            args=[other_agency.agency_id, self.staff_user.user_id],
+        )
+        resp = self.client.patch(
+            url,
+            {'full_name': 'Cross Agency'},
+            content_type='application/json',
+            **auth(self.admin),
+        )
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ── Permission guard ────────────────────────────────────────────────────
+
+    def test_patch_staff_requires_admin(self):
+        civilian = make_user('civ@test.com', '+2348066666666')
+        resp = self.client.patch(
+            self.url,
+            {'full_name': 'Hack'},
+            content_type='application/json',
+            **auth(civilian),
         )
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 

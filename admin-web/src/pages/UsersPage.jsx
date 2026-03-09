@@ -1,11 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import ShellLayout from '../components/ShellLayout';
+import { useModal } from '../components/Modal';
 import { fetchUsers, toggleUserActive } from '../api/admin';
 import { parseApiError } from '../api/errors';
 
 const PAGE_SIZE = 20;
 
+// B4 — sortable column helper
+const SortTh = ({ label, sortKey, sortConfig, onSort }) => {
+  const active = sortConfig.key === sortKey;
+  return (
+    <th className="sortable-th" onClick={() => onSort(sortKey)}>
+      {label}
+      <span className="sort-indicator">
+        {active ? (sortConfig.dir === 'asc' ? '↑' : '↓') : '↕'}
+      </span>
+    </th>
+  );
+};
+
 const UsersPage = () => {
+  const { confirm } = useModal();  // B1
+
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -14,6 +30,9 @@ const UsersPage = () => {
   const [selected, setSelected] = useState(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [page, setPage] = useState(1);
+
+  // B4 — sort state
+  const [sortConfig, setSortConfig] = useState({ key: null, dir: 'asc' });
 
   const load = async () => {
     setLoading(true);
@@ -32,16 +51,41 @@ const UsersPage = () => {
 
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
-    if (!term) return users;
-    return users.filter((u) =>
-      [u.full_name, u.email, u.phone_number]
-        .filter(Boolean).join(' ').toLowerCase().includes(term)
-    );
+    return term
+      ? users.filter((u) =>
+          [u.full_name, u.email, u.phone_number]
+            .filter(Boolean).join(' ').toLowerCase().includes(term)
+        )
+      : users;
   }, [users, query]);
+
+  // B4 — client-side sort of the current page's filtered rows
+  const sorted = useMemo(() => {
+    if (!sortConfig.key) return filtered;
+    return [...filtered].sort((a, b) => {
+      const av = a[sortConfig.key] ?? '';
+      const bv = b[sortConfig.key] ?? '';
+      const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+      return sortConfig.dir === 'asc' ? cmp : -cmp;
+    });
+  }, [filtered, sortConfig]);
+
+  const handleSort = (key) => {
+    setSortConfig((prev) => ({
+      key,
+      dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc',
+    }));
+    setPage(1);
+  };
 
   const handleToggle = async (user) => {
     const action = user.is_active ? 'deactivate' : 'activate';
-    if (!window.confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} account for "${user.email}"?`)) return;
+    // B1 — replace window.confirm with custom modal
+    const ok = await confirm(
+      `${action.charAt(0).toUpperCase() + action.slice(1)} account for "${user.email}"?`,
+      { title: `${action.charAt(0).toUpperCase() + action.slice(1)} User`, confirmLabel: action.charAt(0).toUpperCase() + action.slice(1), danger: user.is_active }
+    );
+    if (!ok) return;
     setToggling(user.user_id);
     try {
       await toggleUserActive(user.user_id, !user.is_active);
@@ -55,8 +99,8 @@ const UsersPage = () => {
     }
   };
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const paginated = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const allPageSelected = paginated.length > 0 && paginated.every((u) => selected.has(u.user_id));
 
@@ -86,7 +130,12 @@ const UsersPage = () => {
 
   const handleBulk = async (activate) => {
     const ids = [...selected];
-    if (!window.confirm(`${activate ? 'Activate' : 'Deactivate'} ${ids.length} user(s)?`)) return;
+    // B1 — replace window.confirm with custom modal
+    const ok = await confirm(
+      `${activate ? 'Activate' : 'Deactivate'} ${ids.length} user(s)?`,
+      { title: `Bulk ${activate ? 'Activate' : 'Deactivate'}`, confirmLabel: activate ? 'Activate All' : 'Deactivate All', danger: !activate }
+    );
+    if (!ok) return;
     setBulkBusy(true);
     try {
       await Promise.all(ids.map((id) => toggleUserActive(id, activate)));
@@ -119,7 +168,7 @@ const UsersPage = () => {
             type="search"
             placeholder="Search by name, email, or phone..."
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => { setQuery(e.target.value); setPage(1); }}
           />
         </div>
 
@@ -136,7 +185,7 @@ const UsersPage = () => {
 
         {loading ? (
           <div className="list-state">Loading users...</div>
-        ) : filtered.length === 0 ? (
+        ) : sorted.length === 0 ? (
           <div className="list-state">No users found.</div>
         ) : (
           <>
@@ -147,13 +196,13 @@ const UsersPage = () => {
                     <th style={{ width: 36 }}>
                       <input type="checkbox" checked={allPageSelected} onChange={toggleSelectAll} />
                     </th>
-                    <th>#</th>
-                    <th>Full Name</th>
-                    <th>Email</th>
+                    <SortTh label="#"         sortKey="user_id"     sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Full Name" sortKey="full_name"   sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Email"     sortKey="email"       sortConfig={sortConfig} onSort={handleSort} />
                     <th>Phone</th>
-                    <th>Joined</th>
-                    <th>Alerts</th>
-                    <th>Status</th>
+                    <SortTh label="Joined"    sortKey="date_joined" sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Alerts"    sortKey="alert_count" sortConfig={sortConfig} onSort={handleSort} />
+                    <SortTh label="Status"    sortKey="is_active"   sortConfig={sortConfig} onSort={handleSort} />
                     <th>Action</th>
                   </tr>
                 </thead>

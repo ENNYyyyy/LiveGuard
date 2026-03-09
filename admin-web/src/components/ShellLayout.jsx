@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard,
@@ -13,13 +13,13 @@ import {
 } from 'lucide-react';
 
 const NAV_LINKS = [
-  { to: '/dashboard',     label: 'Dashboard',     Icon: LayoutDashboard },
-  { to: '/alerts',        label: 'Alerts',         Icon: Siren },
-  { to: '/agencies',      label: 'Agencies',       Icon: Building2 },
-  { to: '/users',         label: 'Users',          Icon: Users },
-  { to: '/notifications', label: 'Notif. Log',     Icon: Bell },
-  { to: '/reports',       label: 'Reports',        Icon: BarChart2 },
-  { to: '/settings',      label: 'Settings',       Icon: Settings },
+  { to: '/dashboard',     label: 'Dashboard',          Icon: LayoutDashboard },
+  { to: '/alerts',        label: 'Alerts',             Icon: Siren },
+  { to: '/agencies',      label: 'Agencies',           Icon: Building2 },
+  { to: '/users',         label: 'Users',              Icon: Users },
+  { to: '/notifications', label: 'Notification Log',   Icon: Bell },
+  { to: '/reports',       label: 'Reports',            Icon: BarChart2 },
+  { to: '/settings',      label: 'Settings',           Icon: Settings },
 ];
 
 const PAGE_TITLES = {
@@ -30,6 +30,33 @@ const PAGE_TITLES = {
   '/notifications': 'Notification Log',
   '/reports':       'Reports',
   '/settings':      'Settings',
+};
+
+// B5 — label map for breadcrumb segments
+const SEG_LABELS = {
+  dashboard:     'Dashboard',
+  agencies:      'Agencies',
+  alerts:        'Alerts',
+  users:         'Users',
+  notifications: 'Notification Log',
+  reports:       'Reports',
+  settings:      'Settings',
+  new:           'New',
+  edit:          'Edit',
+};
+
+const buildBreadcrumbs = (pathname) => {
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length <= 1) return null; // single-level pages need no trail
+  const crumbs = [];
+  let path = '';
+  for (const seg of segments) {
+    path += `/${seg}`;
+    const isId = /^\d+$/.test(seg);
+    const label = isId ? `#${seg}` : (SEG_LABELS[seg] || seg);
+    crumbs.push({ label, to: path });
+  }
+  return crumbs;
 };
 
 function getRoleLabel(user) {
@@ -48,6 +75,8 @@ const ShellLayout = ({ children }) => {
   const pageTitle =
     Object.entries(PAGE_TITLES).find(([path]) => location.pathname.startsWith(path))?.[1] ||
     'Admin Console';
+
+  const breadcrumbs = buildBreadcrumbs(location.pathname);
 
   return (
     <div className="admin-shell">
@@ -89,6 +118,7 @@ const ShellLayout = ({ children }) => {
             className="sidebar-footer-logout"
             onClick={logout}
             title="Logout"
+            aria-label="Logout"
           >
             <LogOut size={16} />
           </button>
@@ -97,14 +127,27 @@ const ShellLayout = ({ children }) => {
 
       {/* ── Main content ── */}
       <div className="admin-body">
+        {/* B6 — removed duplicate logout button from topbar; kept only in sidebar footer */}
         <header className="admin-topbar">
-          <span className="topbar-title">{pageTitle}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span className="topbar-user">{user?.full_name || user?.email || 'Admin'}</span>
-            <button type="button" className="logout-btn" onClick={logout}>
-              Logout
-            </button>
+          <div>
+            <span className="topbar-title">{pageTitle}</span>
+            {/* B5 — breadcrumb trail for nested routes */}
+            {breadcrumbs && (
+              <nav className="breadcrumb" aria-label="Breadcrumb">
+                {breadcrumbs.map((crumb, i) => (
+                  <span key={crumb.to} className="bc-item">
+                    {i > 0 && <span className="bc-sep">›</span>}
+                    {i < breadcrumbs.length - 1 ? (
+                      <Link to={crumb.to} className="bc-link">{crumb.label}</Link>
+                    ) : (
+                      <span className="bc-current">{crumb.label}</span>
+                    )}
+                  </span>
+                ))}
+              </nav>
+            )}
           </div>
+          <span className="topbar-user">{user?.full_name || user?.email || 'Admin'}</span>
         </header>
         <main className="admin-main">{children}</main>
       </div>

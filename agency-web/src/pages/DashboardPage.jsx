@@ -128,13 +128,21 @@ const QueueCard = ({ item, active, onClick, now }) => {
 };
 
 /* ─── Map panel ──────────────────────────────────────────────────────────── */
-const MapPanel = ({ locationData }) => {
+const MapPanel = ({ locationData, loading }) => {
   const [bboxSpan, setBboxSpan] = useState(0.04);
   const viewportRef = useRef(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     setBboxSpan(0.04);
   }, [locationData?.latitude, locationData?.longitude]);
+
+  // Track fullscreen state for tooltip (A12 partial)
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
 
   const mapSrc = useMemo(() => {
     if (!locationData?.latitude || !locationData?.longitude) return null;
@@ -149,13 +157,11 @@ const MapPanel = ({ locationData }) => {
   const handleFullscreen = () => {
     const target = viewportRef.current;
     if (!target) return;
-
     if (document.fullscreenElement) {
       document.exitFullscreen?.();
-      return;
+    } else {
+      target.requestFullscreen?.();
     }
-
-    target.requestFullscreen?.();
   };
 
   return (
@@ -165,7 +171,14 @@ const MapPanel = ({ locationData }) => {
       </div>
 
       <div className="map-viewport" ref={viewportRef}>
-        {mapSrc ? (
+        {/* A11 — loading state while fetching location */}
+        {loading ? (
+          <div className="map-placeholder">
+            <div className="map-placeholder-label">
+              <div style={{ fontSize: 13, color: 'var(--text-3)' }}>Loading location…</div>
+            </div>
+          </div>
+        ) : mapSrc ? (
           <iframe src={mapSrc} title="Incident location map" />
         ) : (
           <div className="map-placeholder">
@@ -180,7 +193,16 @@ const MapPanel = ({ locationData }) => {
       <div className="map-controls">
         <button className="map-ctrl-btn" title="Zoom in" onClick={handleZoomIn} disabled={!mapSrc}>+</button>
         <button className="map-ctrl-btn" title="Zoom out" onClick={handleZoomOut} disabled={!mapSrc}>-</button>
-        <button className="map-ctrl-btn" title="Fullscreen" style={{ fontSize: 9 }} onClick={handleFullscreen} disabled={!mapSrc}>⛶</button>
+        {/* A12 partial — tooltip changes between enter/exit */}
+        <button
+          className="map-ctrl-btn"
+          title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          style={{ fontSize: 9 }}
+          onClick={handleFullscreen}
+          disabled={!mapSrc}
+        >
+          ⛶
+        </button>
       </div>
     </div>
   );
@@ -283,18 +305,34 @@ const ActivityLog = ({ assignment, notes = [] }) => {
 };
 
 /* ─── Acknowledgment section ─────────────────────────────────────────────── */
-const AckSection = ({ assignment, assignmentId, submitting, onAcknowledged, nowMs, currentUser }) => {
+/* A8 — draft preservation: form state survives card-switching via initialDraft/onDraftChange */
+const AckSection = ({
+  assignment,
+  assignmentId,
+  submitting,
+  onAcknowledged,
+  nowMs,
+  currentUser,
+  initialDraft,
+  onDraftChange,
+}) => {
   const ack = assignment?.acknowledgment;
 
-  const [form, setForm] = useState({
-    acknowledged_by: currentUser?.full_name || '',
-    estimated_arrival: '',
-    response_message: '',
-    responder_contact: currentUser?.phone_number || '',
-  });
+  const [form, setForm] = useState(() => ({
+    acknowledged_by: initialDraft?.acknowledged_by ?? currentUser?.full_name ?? '',
+    estimated_arrival: initialDraft?.estimated_arrival ?? '',
+    response_message: initialDraft?.response_message ?? '',
+    responder_contact: initialDraft?.responder_contact ?? currentUser?.phone_number ?? '',
+  }));
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Persist draft on every form change (A8)
+  useEffect(() => {
+    if (!ack) onDraftChange?.(form);
+  }, [form]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const etaCountdown = useMemo(() => {
     if (!ack?.ack_timestamp) return null;
     const etaMinutes = Number(ack?.estimated_arrival);
@@ -321,6 +359,7 @@ const AckSection = ({ assignment, assignmentId, submitting, onAcknowledged, nowM
       if (form.responder_contact.trim()) payload.responder_contact = form.responder_contact.trim();
       await acknowledgeAssignment(assignmentId, payload);
       setSuccess('Acknowledgment submitted. Civilian has been notified.');
+      onDraftChange?.(null); // clear draft after success
       onAcknowledged();
     } catch (err) {
       setError(parseApiError(err, 'Failed to acknowledge.'));
@@ -448,7 +487,7 @@ const DashboardPage = () => {
   const [statusErr,    setStatusErr]    = useState('');
 
   const [newAlertToast, setNewAlertToast] = useState(0);
-  const prevIdsRef     = useRef(null);   // null = first load, Set after that
+  const prevIdsRef     = useRef(null);
   const toastTimerRef  = useRef(null);
 
   const [soundEnabled, setSoundEnabled]     = useState(true);
@@ -457,21 +496,51 @@ const DashboardPage = () => {
   const [priorityFilter, setPriorityFilter] = useState('ALL');
   const [activeTab, setActiveTab]           = useState('active');
   const [copyMsg, setCopyMsg]               = useState('');
-  const [notesMap, setNotesMap]             = useState(() => {
+
+  // A2 — notes: persisted to localStorage, synced across tabs via storage event
+  const [notesMap, setNotesMap] = useState(() => {
     try { return JSON.parse(localStorage.getItem('lg_agency_notes') || '{}'); } catch { return {}; }
   });
-  const [noteText, setNoteText]             = useState('');
-  const [queueSearch, setQueueSearch]       = useState('');
+  const [noteText, setNoteText] = useState('');
+
+  // A3 — debounced queue search
+  const [searchInput, setSearchInput]   = useState('');
+  const [queueSearch, setQueueSearch]   = useState('');
+  const searchDebounceRef               = useRef(null);
+
   const [resolveConfirm, setResolveConfirm] = useState(false);
   const [throttledUntil, setThrottledUntil] = useState(null);
   const throttledUntilRef = useRef(null);
+
+  // A8 — draft ack form data persisted across card switches (keyed by assignmentId)
+  const ackDraftsRef = useRef({});
+
   useEffect(() => { throttledUntilRef.current = throttledUntil; }, [throttledUntil]);
   useEffect(() => { soundEnabledRef.current = soundEnabled; }, [soundEnabled]);
 
-  // Persist dispatcher notes across sessions
+  // Persist dispatcher notes to localStorage
   useEffect(() => {
     localStorage.setItem('lg_agency_notes', JSON.stringify(notesMap));
   }, [notesMap]);
+
+  // A2 — sync notes across tabs when another tab writes to localStorage
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === 'lg_agency_notes' && e.newValue) {
+        try { setNotesMap(JSON.parse(e.newValue)); } catch { /* ignore */ }
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // A3 — debounce search: update queueSearch 300ms after last keystroke
+  const handleSearchChange = (e) => {
+    const val = e.target.value;
+    setSearchInput(val);
+    clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => setQueueSearch(val), 300);
+  };
 
   // Browser tab: show active alert count
   useEffect(() => {
@@ -514,10 +583,15 @@ const DashboardPage = () => {
 
       setAssignments(list);
       setLastSyncedAt(Date.now());
-      setSelectedId((prev) => prev ?? (list[0]?.assignment_id ?? null));
+
+      // A4 — auto-deselect if selected item no longer exists in the refreshed list
+      setSelectedId((prev) => {
+        if (!prev) return list[0]?.assignment_id ?? null;
+        if (list.some((a) => String(a.assignment_id) === String(prev))) return prev;
+        return list[0]?.assignment_id ?? null;
+      });
     } catch (err) {
       if (err?.response?.status === 429) {
-        // Parse retry-after from header, then fallback to message body
         const ra = err?.response?.headers?.['retry-after'];
         let secs = ra ? parseInt(ra, 10) : NaN;
         if (isNaN(secs)) {
@@ -534,7 +608,6 @@ const DashboardPage = () => {
     }
   }, []);
 
-  // Keep a ref to the latest loadAssignments so the interval never calls a stale closure
   const loadAssignmentsRef = useRef(loadAssignments);
   useEffect(() => { loadAssignmentsRef.current = loadAssignments; }, [loadAssignments]);
 
@@ -610,8 +683,8 @@ const DashboardPage = () => {
   const pb          = selected ? priorityBadge(selected.alert_priority_level) : null;
   const alertStatus = selected ? (selected.alert_status || '').toUpperCase() : '';
 
-  const syncedSecsAgo   = lastSyncedAt ? Math.floor((now - lastSyncedAt) / 1000) : null;
-  const connectionOk    = syncedSecsAgo !== null && syncedSecsAgo < 15;
+  const syncedSecsAgo    = lastSyncedAt ? Math.floor((now - lastSyncedAt) / 1000) : null;
+  const connectionOk     = syncedSecsAgo !== null && syncedSecsAgo < 15;
   const throttleSecsLeft = throttledUntil ? Math.max(0, Math.ceil((throttledUntil - now) / 1000)) : 0;
 
   const displayedAssignments = useMemo(() => {
@@ -694,14 +767,29 @@ const DashboardPage = () => {
             <span className={`conn-dot ${connectionOk ? 'conn-ok' : 'conn-stale'}`} title={syncedSecsAgo !== null ? `Last synced ${syncedSecsAgo}s ago` : 'Connecting…'} />
           </div>
           <div className="queue-header-right">
+            {/* A5 — add aria-label to icon-only sound toggle */}
             <button
               className={`sound-toggle ${soundEnabled ? 'on' : 'off'}`}
               title={soundEnabled ? 'Mute alerts' : 'Unmute alerts'}
+              aria-label={soundEnabled ? 'Mute alert sound' : 'Unmute alert sound'}
               onClick={() => setSoundEnabled((v) => !v)}
             >
               {soundEnabled ? <Bell size={15} /> : <BellOff size={15} />}
             </button>
-            <span className="queue-count-badge">{displayedAssignments.length}</span>
+            {/* A13 — show total count alongside filtered count */}
+            <span
+              className="queue-count-badge"
+              title={
+                displayedAssignments.length !== assignments.length
+                  ? `${displayedAssignments.length} shown / ${assignments.length} total`
+                  : `${assignments.length} total`
+              }
+            >
+              {displayedAssignments.length}
+              {displayedAssignments.length !== assignments.length && (
+                <span style={{ opacity: 0.7, fontWeight: 400 }}>/{assignments.length}</span>
+              )}
+            </span>
           </div>
         </div>
 
@@ -723,12 +811,14 @@ const DashboardPage = () => {
             </button>
           ))}
         </div>
+
+        {/* A3 — debounced search via searchInput/queueSearch split */}
         <div className="queue-search-wrap">
           <input
             className="queue-search-input"
             type="search"
-            value={queueSearch}
-            onChange={(e) => setQueueSearch(e.target.value)}
+            value={searchInput}
+            onChange={handleSearchChange}
             placeholder="Search queue by ID, type, status, reporter…"
           />
         </div>
@@ -762,7 +852,7 @@ const DashboardPage = () => {
       </aside>
 
       {/* ══ CENTER — Map ══ */}
-      <MapPanel locationData={locationData} />
+      <MapPanel locationData={locationData} loading={loadingDetail} />
 
       {/* ══ RIGHT — Command Console ══ */}
       <aside className="console-panel">
@@ -841,11 +931,7 @@ const DashboardPage = () => {
               </div>
 
               {/* ── Location ── */}
-              {loadingDetail ? (
-                <div style={{ color: 'var(--text-3)', fontSize: 12, textAlign: 'center', padding: '8px 0' }}>
-                  Loading location…
-                </div>
-              ) : locationData ? (
+              {locationData ? (
                 <div className="civilian-card">
                   <div className="medical-item-label" style={{ marginBottom: 8 }}>📍 Incident Location</div>
                   {locationData.address && (
@@ -883,6 +969,14 @@ const DashboardPage = () => {
                 onAcknowledged={loadAssignments}
                 nowMs={now}
                 currentUser={user}
+                initialDraft={ackDraftsRef.current[selectedId]}
+                onDraftChange={(draft) => {
+                  if (draft === null) {
+                    delete ackDraftsRef.current[selectedId];
+                  } else {
+                    ackDraftsRef.current[selectedId] = draft;
+                  }
+                }}
               />
 
               {/* ── Response flow ── */}

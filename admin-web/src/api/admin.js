@@ -52,6 +52,11 @@ export const removeAgencyStaff = async (agencyId, userId) => {
   return response.data;
 };
 
+export const updateAgencyStaff = async (agencyId, userId, data) => {
+  const response = await client.patch(`/api/admin/agencies/${agencyId}/staff/${userId}/`, data);
+  return response.data;
+};
+
 export const fetchAlerts = async ({ status, type, priority, search, page, page_size } = {}) => {
   const params = {};
   if (status) params.status = status;

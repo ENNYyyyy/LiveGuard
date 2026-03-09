@@ -29,6 +29,51 @@ class AgencyStaffCreateSerializer(serializers.Serializer):
         return user
 
 
+class AgencyStaffUpdateSerializer(serializers.Serializer):
+    """
+    PATCH /api/admin/agencies/<id>/staff/<uid>/
+    Editable fields: full_name, phone_number, role.
+    Email is intentionally omitted (immutable).
+    All fields optional; at least one must be provided.
+    """
+    import re as _re
+
+    full_name    = serializers.CharField(max_length=150, required=False)
+    phone_number = serializers.CharField(max_length=15,  required=False)
+    role         = serializers.ChoiceField(choices=AgencyUser.ROLES, required=False)
+
+    def validate_phone_number(self, value):
+        import re
+        if not re.match(r'^\+\d{7,15}$', value.strip()):
+            raise serializers.ValidationError(
+                'Phone number must start with "+" followed by 7–15 digits (e.g. +2348012345678).'
+            )
+        return value.strip()
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                'At least one field (full_name, phone_number, role) must be provided.'
+            )
+        return attrs
+
+    def update(self, agency_user, validated_data):
+        user = agency_user.user
+        user_fields = []
+        if 'full_name' in validated_data:
+            user.full_name = validated_data['full_name']
+            user_fields.append('full_name')
+        if 'phone_number' in validated_data:
+            user.phone_number = validated_data['phone_number']
+            user_fields.append('phone_number')
+        if user_fields:
+            user.save(update_fields=user_fields)
+        if 'role' in validated_data:
+            agency_user.role = validated_data['role']
+            agency_user.save(update_fields=['role'])
+        return agency_user
+
+
 class AgencyStaffSerializer(serializers.ModelSerializer):
     user_id      = serializers.IntegerField(source='user.user_id', read_only=True)
     full_name    = serializers.CharField(source='user.full_name', read_only=True)
