@@ -1,0 +1,241 @@
+from rest_framework import serializers
+from agencies.models import SecurityAgency, AgencyUser
+from alerts.models import EmergencyAlert, AlertAssignment, Acknowledgment
+from accounts.models import User
+from notifications.models import NotificationLog
+from .models import SystemSetting
+
+
+# ─── Agency ───────────────────────────────────────────────────────────────────
+
+class AgencyStaffCreateSerializer(serializers.Serializer):
+    email        = serializers.EmailField()
+    password     = serializers.CharField(min_length=8, write_only=True)
+    full_name    = serializers.CharField(max_length=150)
+    phone_number = serializers.CharField(max_length=15)
+    role         = serializers.ChoiceField(choices=AgencyUser.ROLES)
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
+
+    def create(self, validated_data):
+        agency = self.context['agency']
+        role = validated_data.pop('role')
+        password = validated_data.pop('password')
+        user = User.objects.create_user(password=password, **validated_data)
+        AgencyUser.objects.create(agency=agency, user=user, role=role)
+        return user
+
+
+class AgencyStaffUpdateSerializer(serializers.Serializer):
+    """
+    PATCH /api/admin/agencies/<id>/staff/<uid>/
+    Editable fields: full_name, phone_number, role.
+    Email is intentionally omitted (immutable).
+    All fields optional; at least one must be provided.
+    """
+    import re as _re
+
+    full_name    = serializers.CharField(max_length=150, required=False)
+    phone_number = serializers.CharField(max_length=15,  required=False)
+    role         = serializers.ChoiceField(choices=AgencyUser.ROLES, required=False)
+
+    def validate_phone_number(self, value):
+        import re
+        if not re.match(r'^\+\d{7,15}$', value.strip()):
+            raise serializers.ValidationError(
+                'Phone number must start with "+" followed by 7–15 digits (e.g. +2348012345678).'
+            )
+        return value.strip()
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                'At least one field (full_name, phone_number, role) must be provided.'
+            )
+        return attrs
+
+    def update(self, agency_user, validated_data):
+        user = agency_user.user
+        user_fields = []
+        if 'full_name' in validated_data:
+            user.full_name = validated_data['full_name']
+            user_fields.append('full_name')
+        if 'phone_number' in validated_data:
+            user.phone_number = validated_data['phone_number']
+            user_fields.append('phone_number')
+        if user_fields:
+            user.save(update_fields=user_fields)
+        if 'role' in validated_data:
+            agency_user.role = validated_data['role']
+            agency_user.save(update_fields=['role'])
+        return agency_user
+
+
+class AgencyStaffSerializer(serializers.ModelSerializer):
+    user_id      = serializers.IntegerField(source='user.user_id', read_only=True)
+    full_name    = serializers.CharField(source='user.full_name', read_only=True)
+    email        = serializers.EmailField(source='user.email', read_only=True)
+    phone_number = serializers.CharField(source='user.phone_number', read_only=True)
+
+    class Meta:
+        model  = AgencyUser
+        fields = ['user_id', 'full_name', 'email', 'phone_number', 'role']
+
+
+class AgencyListSerializer(serializers.ModelSerializer):
+    staff_count        = serializers.SerializerMethodField()
+    active_alert_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = SecurityAgency
+        fields = [
+            'agency_id', 'agency_name', 'agency_type', 'contact_email',
+            'contact_phone', 'jurisdiction', 'address', 'is_active',
+            'operational_capacity', 'staff_count', 'active_alert_count',
+        ]
+
+    def get_staff_count(self, obj):
+        return obj.staff.count()
+
+    def get_active_alert_count(self, obj):
+        return obj.assignments.filter(
+            alert__status__in=['DISPATCHED', 'ACKNOWLEDGED', 'RESPONDING']
+        ).count()
+
+
+class AgencyDetailSerializer(AgencyListSerializer):
+    staff = AgencyStaffSerializer(many=True, read_only=True)
+
+    class Meta(AgencyListSerializer.Meta):
+        fields = AgencyListSerializer.Meta.fields + ['staff']
+
+
+class AgencyCreateUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = SecurityAgency
+        fields = [
+            'agency_name', 'agency_type', 'contact_email', 'contact_phone',
+            'jurisdiction', 'address', 'operational_capacity', 'is_active',
+        ]
+
+
+# ─── Alert ────────────────────────────────────────────────────────────────────
+
+class UserNestedSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = User
+        fields = ['user_id', 'full_name', 'email', 'phone_number']
+
+
+class AcknowledgmentAdminSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = Acknowledgment
+        fields = [
+            'ack_id', 'acknowledged_by', 'ack_timestamp',
+            'estimated_arrival', 'response_message', 'responder_contact',
+        ]
+
+
+class AssignmentAdminSerializer(serializers.ModelSerializer):
+    agency_id   = serializers.IntegerField(source='agency.agency_id', read_only=True)
+    agency_name = serializers.CharField(source='agency.agency_name', read_only=True)
+    agency_type = serializers.CharField(source='agency.agency_type', read_only=True)
+    acknowledgment = AcknowledgmentAdminSerializer(read_only=True, allow_null=True)
+
+    class Meta:
+        model  = AlertAssignment
+        fields = [
+            'assignment_id', 'agency_id', 'agency_name', 'agency_type',
+            'assigned_at', 'notification_status', 'response_time',
+            'assignment_priority', 'acknowledgment',
+        ]
+
+
+class AlertListAdminSerializer(serializers.ModelSerializer):
+    reporter         = UserNestedSerializer(source='user', read_only=True)
+    address          = serializers.CharField(source='location.address', default=None, read_only=True)
+    latitude         = serializers.DecimalField(
+        source='location.latitude', max_digits=10, decimal_places=7, default=None, read_only=True
+    )
+    longitude        = serializers.DecimalField(
+        source='location.longitude', max_digits=10, decimal_places=7, default=None, read_only=True
+    )
+    assignment_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = EmergencyAlert
+        fields = [
+            'alert_id', 'alert_type', 'priority_level', 'status',
+            'created_at', 'updated_at', 'reporter',
+            'address', 'latitude', 'longitude', 'assignment_count',
+        ]
+
+    def get_assignment_count(self, obj):
+        return obj.assignments.count()
+
+
+class AlertDetailAdminSerializer(serializers.ModelSerializer):
+    reporter    = UserNestedSerializer(source='user', read_only=True)
+    location    = serializers.SerializerMethodField()
+    assignments = AssignmentAdminSerializer(many=True, read_only=True)
+
+    class Meta:
+        model  = EmergencyAlert
+        fields = [
+            'alert_id', 'alert_type', 'priority_level', 'description',
+            'status', 'resolved_at', 'resolved_by', 'created_at', 'updated_at',
+            'reporter', 'location', 'assignments',
+        ]
+
+    def get_location(self, obj):
+        loc = getattr(obj, 'location', None)
+        if not loc:
+            return None
+        return {
+            'latitude':  str(loc.latitude),
+            'longitude': str(loc.longitude),
+            'accuracy':  loc.accuracy,
+            'address':   loc.address,
+            'maps_url':  f"https://maps.google.com/?q={loc.latitude},{loc.longitude}",
+        }
+
+
+# ─── Users ────────────────────────────────────────────────────────────────────
+
+class CivilianUserSerializer(serializers.ModelSerializer):
+    alert_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = User
+        fields = ['user_id', 'full_name', 'email', 'phone_number', 'date_joined', 'alert_count', 'is_active']
+
+    def get_alert_count(self, obj):
+        return obj.alerts.count()
+
+
+# ─── Notification logs ────────────────────────────────────────────────────────
+
+class NotificationLogSerializer(serializers.ModelSerializer):
+    alert_id      = serializers.IntegerField(source='assignment.alert.alert_id', read_only=True)
+    agency_name   = serializers.CharField(source='assignment.agency.agency_name', read_only=True)
+    assignment_id = serializers.IntegerField(source='assignment.assignment_id', read_only=True)
+
+    class Meta:
+        model  = NotificationLog
+        fields = [
+            'log_id', 'assignment_id', 'alert_id', 'agency_name',
+            'channel_type', 'recipient', 'delivery_status',
+            'retry_count', 'error_message', 'sent_at',
+        ]
+
+
+# ─── System settings ──────────────────────────────────────────────────────────
+
+class SystemSettingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = SystemSetting
+        fields = ['key', 'value', 'description', 'updated_at']
+        read_only_fields = ['key', 'description', 'updated_at']
